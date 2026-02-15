@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do List</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
+        h1 { text-align: center; margin-bottom: 20px; color: #333; }
+        .add-form { display: flex; gap: 8px; margin-bottom: 20px; }
+        .add-form input[type="text"] { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+        .add-form button { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        .add-form button:hover { background: #45a049; }
+        ul { list-style: none; }
+        li { display: flex; align-items: center; gap: 10px; padding: 12px; background: white; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        li.done span { text-decoration: line-through; color: #999; }
+        li span { flex: 1; font-size: 16px; }
+        .btn-toggle, .btn-delete { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .btn-toggle { background: #2196F3; color: white; }
+        .btn-toggle:hover { background: #1976D2; }
+        .btn-delete { background: #f44336; color: white; }
+        .btn-delete:hover { background: #d32f2f; }
+        .empty { text-align: center; color: #999; padding: 20px; }
+    </style>
+</head>
+<body>
+    <h1>To-Do List</h1>
+
+    <form class="add-form" action="/add" method="post">
+        <input type="text" name="text" placeholder="Add a new task..." required>
+        <button type="submit">Add</button>
+    </form>
+
+    {% if todos %}
+    <ul>
+        {% for todo in todos %}
+        <li class="{{ 'done' if todo.done }}">
+            <form action="/toggle/{{ todo.id }}" method="post" style="display:inline;">
+                <button type="submit" class="btn-toggle">{{ '✓' if todo.done else '○' }}</button>
+            </form>
+            <span>{{ todo.text }}</span>
+            <form action="/delete/{{ todo.id }}" method="post" style="display:inline;">
+                <button type="submit" class="btn-delete">Delete</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">No tasks yet. Add one above!</p>
+    {% endif %}
+</body>
+</html>
