@@ -1,4 +1,9 @@
 __pycache__/
 *.pyc
+*.pyc
 todos.json
 .env
+instance/
+*.db
+*.sqlite3
+

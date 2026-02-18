@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — My Daily Brief{% endblock %}
+
+{% block extra_head %}
+<style>
+  .dash-hero {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border-radius: 14px;
+    padding: 32px 36px;
+    color: #fff;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .dash-hero h1 { font-size: 26px; margin-bottom: 6px; }
+  .dash-hero p { color: rgba(255,255,255,0.65); font-size: 14px; line-height: 1.5; }
+  .dash-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; flex-shrink: 0; }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .stat-label { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .stat-value { font-size: 28px; font-weight: 800; color: #1a1a2e; }
+  .stat-sub { font-size: 12px; color: #aaa; margin-top: 4px; }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .section-header h2 { font-size: 18px; }
+
+  .nl-list { list-style: none; }
+  .nl-item {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    transition: box-shadow 0.15s;
+  }
+  .nl-item:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+  .nl-date-block {
+    background: #f0f4ff;
+    border-radius: 8px;
+    padding: 10px 14px;
+    text-align: center;
+    min-width: 56px;
+    flex-shrink: 0;
+  }
+  .nl-date-block .day { font-size: 20px; font-weight: 800; color: #1a1a2e; line-height: 1; }
+  .nl-date-block .month { font-size: 11px; color: #888; text-transform: uppercase; margin-top: 2px; }
+  .nl-info { flex: 1; min-width: 0; }
+  .nl-info h4 { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+  .nl-info p { font-size: 12px; color: #888; }
+  .nl-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 12px;
+    flex-shrink: 0;
+  }
+  .nl-badge.emailed { background: #d4edda; color: #155724; }
+  .nl-badge.preview-only { background: #e2e3e5; color: #555; }
+
+  .interests-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .interest-tag {
+    background: #f0f4ff;
+    color: #4361ee;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 20px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 12px;
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+  .empty-state h3 { font-size: 18px; margin-bottom: 8px; }
+  .empty-state p { color: #666; font-size: 14px; margin-bottom: 20px; }
+
+  .generate-spinner { display: none; }
+  .generating .generate-text { display: none; }
+  .generating .generate-spinner { display: inline; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- HERO -->
+<div class="dash-hero">
+  <div>
+    <h1>Good to see you, {{ user.name.split()[0] }}!</h1>
+    <p>
+      {% if user.last_newsletter_at %}
+        Last brief sent {{ user.last_newsletter_at | format_dt }}.
+      {% else %}
+        You haven't generated a brief yet. Click the button to get your first one!
+      {% endif %}
+    </p>
+    {% if user.interests %}
+      <div class="interests-tags" style="margin-top:12px;">
+        {% for cat in user.interests %}
+          <span class="interest-tag">{{ cat.icon }} {{ cat.name }}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+  <div class="dash-hero-actions">
+    {% if user.interests %}
+      <form method="post" action="{{ url_for('generate_now') }}" id="gen-form">
+        <button type="submit" class="btn btn-primary btn-lg" id="gen-btn" onclick="this.closest('form').submit();this.classList.add('generating');">
+          <span class="generate-text">Generate my brief</span>
+          <span class="generate-spinner">Generating...</span>
+        </button>
+      </form>
+    {% endif %}
+    <a href="{{ url_for('preferences') }}" class="btn btn-secondary btn-lg" style="color:#333;">Edit interests</a>
+  </div>
+</div>
+
+<!-- No interests warning -->
+{% if not user.interests %}
+<div class="alert alert-warning" style="margin-bottom:24px;">
+  You haven't selected any interests yet.
+  <a href="{{ url_for('preferences') }}" style="color:inherit;font-weight:700;text-decoration:underline;">Pick your topics</a> to generate your first brief.
+</div>
+{% endif %}
+
+<!-- STATS -->
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-label">Total briefs</div>
+    <div class="stat-value">{{ newsletters | length }}</div>
+    <div class="stat-sub">Generated so far</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Emailed</div>
+    <div class="stat-value">{{ newsletters | selectattr('was_emailed') | list | length }}</div>
+    <div class="stat-sub">Sent to inbox</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Interests</div>
+    <div class="stat-value">{{ user.interests | length }}</div>
+    <div class="stat-sub">Topics followed</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Status</div>
+    <div class="stat-value" style="font-size:18px;color:{% if user.is_subscribed %}#2ecc71{% else %}#e94560{% endif %};">
+      {{ "Active" if user.is_subscribed else "Paused" }}
+    </div>
+    <div class="stat-sub">Newsletter delivery</div>
+  </div>
+</div>
+
+<!-- RECENT NEWSLETTERS -->
+<div class="section-header">
+  <h2>Recent briefs</h2>
+  {% if newsletters %}
+    <a href="{{ url_for('preview') }}" class="btn btn-outline btn-sm">View latest</a>
+  {% endif %}
+</div>
+
+{% if newsletters %}
+  <ul class="nl-list">
+    {% for nl in newsletters %}
+    <li class="nl-item">
+      <div class="nl-date-block">
+        <div class="day">{{ nl.sent_at.strftime('%-d') }}</div>
+        <div class="month">{{ nl.sent_at.strftime('%b') }}</div>
+      </div>
+      <div class="nl-info">
+        <h4>{{ nl.subject or "Daily Brief" }}</h4>
+        <p>{{ nl.sent_at | format_dt }}</p>
+      </div>
+      <span class="nl-badge {% if nl.was_emailed %}emailed{% else %}preview-only{% endif %}">
+        {% if nl.was_emailed %}Emailed{% else %}Preview only{% endif %}
+      </span>
+      <a href="{{ url_for('view_newsletter', newsletter_id=nl.id) }}" class="btn btn-secondary btn-sm">Read</a>
+    </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <div class="empty-state">
+    <div class="icon">📰</div>
+    <h3>No briefs yet</h3>
+    <p>Generate your first personalized newsletter to see it here. It only takes a moment.</p>
+    {% if user.interests %}
+      <form method="post" action="{{ url_for('generate_now') }}">
+        <button type="submit" class="btn btn-primary">Generate my first brief</button>
+      </form>
+    {% else %}
+      <a href="{{ url_for('preferences') }}" class="btn btn-primary">Choose my interests</a>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}
