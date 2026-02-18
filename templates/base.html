@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}My Daily Brief{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand:   #1a1a2e;
+      --accent:  #e94560;
+      --bg:      #f8f9fa;
+      --card:    #ffffff;
+      --muted:   #6c757d;
+      --border:  #e8e8e8;
+      --success: #2ecc71;
+      --info:    #3498db;
+      --warning: #f39c12;
+      --danger:  #e74c3c;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: #222;
+      min-height: 100vh;
+    }
+
+    /* NAV */
+    nav {
+      background: var(--brand);
+      padding: 14px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+    }
+    .nav-inner {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-brand {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+      text-decoration: none;
+      letter-spacing: -0.3px;
+    }
+    .nav-brand span { color: var(--accent); }
+    .nav-links { display: flex; gap: 6px; align-items: center; }
+    .nav-links a {
+      color: rgba(255,255,255,0.75);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 6px 12px;
+      border-radius: 6px;
+      transition: all 0.15s;
+    }
+    .nav-links a:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .nav-links a.btn-nav {
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    .nav-links a.btn-nav:hover { background: #c73050; }
+
+    /* MAIN */
+    main { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+
+    /* FLASH MESSAGES */
+    .flash-container { max-width: 900px; margin: 0 auto; padding: 12px 20px 0; }
+    .alert {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 8px;
+      font-weight: 500;
+      border-left: 4px solid transparent;
+    }
+    .alert-success { background: #d4edda; color: #155724; border-color: var(--success); }
+    .alert-danger  { background: #f8d7da; color: #721c24; border-color: var(--danger); }
+    .alert-info    { background: #d1ecf1; color: #0c5460; border-color: var(--info); }
+    .alert-warning { background: #fff3cd; color: #856404; border-color: var(--warning); }
+
+    /* CARDS */
+    .card {
+      background: var(--card);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 28px 32px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    }
+
+    /* BUTTONS */
+    .btn {
+      display: inline-block;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #c73050; }
+    .btn-secondary { background: #e9ecef; color: #333; }
+    .btn-secondary:hover { background: #dee2e6; }
+    .btn-outline { background: transparent; border: 2px solid var(--accent); color: var(--accent); }
+    .btn-outline:hover { background: var(--accent); color: #fff; }
+    .btn-dark { background: var(--brand); color: #fff; }
+    .btn-dark:hover { background: #0d0d1a; }
+    .btn-lg { padding: 14px 28px; font-size: 16px; }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+    /* FORMS */
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #444; margin-bottom: 6px; }
+    input[type="text"], input[type="email"], input[type="password"] {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+      transition: border-color 0.15s;
+      outline: none;
+      background: #fafafa;
+    }
+    input:focus { border-color: var(--accent); background: #fff; }
+
+    /* TYPOGRAPHY */
+    h1 { font-size: 32px; font-weight: 800; line-height: 1.2; }
+    h2 { font-size: 22px; font-weight: 700; }
+    h3 { font-size: 16px; font-weight: 700; }
+    .text-muted { color: var(--muted); }
+    .text-accent { color: var(--accent); }
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    /* UTILITIES */
+    .mt-8  { margin-top: 8px; }
+    .mt-16 { margin-top: 16px; }
+    .mt-24 { margin-top: 24px; }
+    .mb-8  { margin-bottom: 8px; }
+    .mb-16 { margin-bottom: 16px; }
+    .text-center { text-align: center; }
+
+    /* FOOTER */
+    footer {
+      text-align: center;
+      padding: 32px 20px;
+      color: var(--muted);
+      font-size: 13px;
+      border-top: 1px solid var(--border);
+      margin-top: 40px;
+    }
+
+    @media (max-width: 600px) {
+      .nav-inner { flex-direction: column; gap: 10px; }
+      main { padding: 24px 16px; }
+      .card { padding: 20px; }
+      h1 { font-size: 26px; }
+    }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+<nav>
+  <div class="nav-inner">
+    <a href="{{ url_for('index') }}" class="nav-brand">My<span>Daily</span>Brief</a>
+    <div class="nav-links">
+      {% if current_user.is_authenticated %}
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('preferences') }}">Interests</a>
+        <a href="{{ url_for('logout') }}">Log out</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">Log in</a>
+        <a href="{{ url_for('register') }}" class="btn-nav">Get started</a>
+      {% endif %}
+    </div>
+  </div>
+</nav>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="flash-container">
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<footer>
+  My Daily Brief &mdash; Personalized news, curated daily.
+</footer>
+</body>
+</html>

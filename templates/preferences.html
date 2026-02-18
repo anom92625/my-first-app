@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Your Interests — My Daily Brief{% endblock %}
+
+{% block extra_head %}
+<style>
+  .pref-header { text-align: center; margin-bottom: 32px; }
+  .pref-header h1 { font-size: 30px; margin-bottom: 10px; }
+  .pref-header p { color: #666; font-size: 16px; max-width: 480px; margin: 0 auto; line-height: 1.6; }
+
+  .categories-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+    margin: 28px 0;
+  }
+
+  .cat-card {
+    position: relative;
+  }
+  .cat-card input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 0; height: 0;
+  }
+  .cat-label {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 18px;
+    background: #fff;
+    border: 2px solid #e8e8e8;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .cat-label:hover { border-color: #e94560; background: #fff8f9; }
+  .cat-card input:checked + .cat-label {
+    border-color: #e94560;
+    background: #fff0f3;
+    box-shadow: 0 0 0 3px rgba(233,69,96,0.12);
+  }
+  .cat-icon {
+    font-size: 28px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .cat-info h4 { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+  .cat-info p { font-size: 12px; color: #888; line-height: 1.4; }
+  .checkmark {
+    position: absolute;
+    top: 10px; right: 12px;
+    width: 20px; height: 20px;
+    background: #e94560;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .cat-card input:checked ~ .checkmark { display: flex; }
+
+  .pref-actions { display: flex; justify-content: center; gap: 12px; margin-top: 8px; }
+  .select-hint { text-align: center; font-size: 13px; color: #999; margin-bottom: 8px; }
+
+  .tip-box {
+    background: #f0f4ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 14px;
+    color: #3730a3;
+    line-height: 1.5;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pref-header">
+  <h1>What interests you?</h1>
+  <p>Select the topics you want in your daily brief. You can change these anytime.</p>
+</div>
+
+<div class="tip-box">
+  <strong>Tip:</strong> Choose 3-6 categories for the best experience. Your newsletter will feature the top stories from each area you pick, with AI-written summaries and source citations.
+</div>
+
+<form method="post" action="{{ url_for('preferences') }}">
+  <p class="select-hint">Click to select / deselect</p>
+  <div class="categories-grid">
+    {% for cat in categories %}
+    <div class="cat-card">
+      <input
+        type="checkbox"
+        id="cat-{{ cat.id }}"
+        name="categories"
+        value="{{ cat.id }}"
+        {% if cat.id in user_interests %}checked{% endif %}
+      >
+      <label class="cat-label" for="cat-{{ cat.id }}">
+        <span class="cat-icon">{{ cat.icon }}</span>
+        <div class="cat-info">
+          <h4>{{ cat.name }}</h4>
+          <p>{{ cat.description }}</p>
+        </div>
+      </label>
+      <span class="checkmark">&#10003;</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="pref-actions">
+    <button type="submit" class="btn btn-primary btn-lg">Save my interests &rarr;</button>
+    {% if current_user.newsletters|length > 0 %}
+      <a href="{{ url_for('dashboard') }}" class="btn btn-secondary btn-lg">Cancel</a>
+    {% endif %}
+  </div>
+</form>
+
+<script>
+  // Live counter
+  const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach(cb => cb.addEventListener('change', updateHint));
+  function updateHint() {
+    const count = document.querySelectorAll('input[type="checkbox"]:checked').length;
+    document.querySelector('.select-hint').textContent =
+      count === 0 ? 'Click to select / deselect' :
+      `${count} categor${count === 1 ? 'y' : 'ies'} selected`;
+  }
+  updateHint();
+</script>
+{% endblock %}

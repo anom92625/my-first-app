@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribed — My Daily Brief{% endblock %}
+
+{% block content %}
+<div style="max-width:480px;margin:40px auto;text-align:center;">
+  <div style="font-size:64px;margin-bottom:20px;">👋</div>
+  <h1 style="margin-bottom:12px;">You've been unsubscribed</h1>
+  <p style="color:#666;font-size:16px;line-height:1.6;margin-bottom:28px;">
+    Sorry to see you go, {{ name }}. You won't receive any more newsletters from My Daily Brief.
+  </p>
+  <p style="color:#888;font-size:14px;margin-bottom:24px;">
+    Changed your mind? Log in to re-enable your subscription from the dashboard.
+  </p>
+  <a href="{{ url_for('index') }}" class="btn btn-secondary">Back to homepage</a>
+</div>
+{% endblock %}
