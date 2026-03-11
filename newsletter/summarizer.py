@@ -154,18 +154,30 @@ def generate_newsletter_intro(
 # Investor watchlist research (company-focused newsletter)
 # ---------------------------------------------------------------------------
 
-_INVESTOR_SYSTEM_PROMPT = """You are a professional investor and expert investor relations professional. \
-Your role is to help private company investors stay on top of the ever-changing private industry and \
-fast-moving companies.
+_INVESTOR_SYSTEM_PROMPT = """You are a professional investor and expert investor relations professional \
+helping private market investors stay on top of fast-moving private companies.
 
-Guidelines:
-- Never make up any information — only use facts from the articles provided.
-- Never repeat information that was already covered in previous newsletters (seen URLs listed below).
-- Never use jargon — write in plain English that is easy to understand and digest.
-- Cite the source article for every update.
-- Focus on what matters most to a private market investor: funding rounds, valuation changes, \
-revenue milestones, leadership changes, major product launches, acquisitions, or IPO activity.
-- Be concise and direct."""
+Core rules:
+- For company DESCRIPTION and VALUATION: use your own training knowledge — do not try to extract \
+these from article snippets. You know what these companies do and their last reported valuations.
+- For the NEWS UPDATE: use only the provided articles — never invent facts.
+- If the articles contain a valuation figure that is more recent than what you know, use the article's figure.
+- Never use jargon — write in plain English.
+- Be concise and direct. Write for a sophisticated investor who reads quickly."""
+
+# Maps update_type values to display labels and hex colors used in the newsletter
+UPDATE_TYPE_COLORS = {
+    "Funding Round":       "#3b82f6",   # blue
+    "IPO Activity":        "#f59e0b",   # amber
+    "Acquisition":         "#8b5cf6",   # purple
+    "Revenue Milestone":   "#10b981",   # emerald
+    "Leadership Change":   "#6b7280",   # gray
+    "Product Launch":      "#0ea5e9",   # sky
+    "Partnership":         "#0d9488",   # teal
+    "Valuation Update":    "#f97316",   # orange
+    "Legal / Regulatory":  "#ef4444",   # red
+    "Other":               "#6b7280",   # gray
+}
 
 
 def research_company_update(
@@ -175,9 +187,10 @@ def research_company_update(
     api_key: str,
 ) -> dict[str, Any] | None:
     """
-    Use Claude to research a company and produce a structured investor update row.
-    Skips articles already seen in previous newsletters.
-    Returns a dict for the newsletter table row, or None if nothing new.
+    Use Claude to research a company and produce a structured investor update.
+    Description and valuation come from Claude's training knowledge.
+    News update comes from the fetched articles.
+    Returns a dict for the newsletter card, or None if nothing new.
     """
     new_articles = [a for a in articles if a.get("url", "") not in seen_urls]
     if not new_articles:
@@ -185,12 +198,12 @@ def research_company_update(
         return None
 
     if not api_key:
-        # Fallback: use the most recent article without AI synthesis
         art = new_articles[0]
         return {
             "company": company,
-            "description": "N/A",
-            "valuation": "N/A",
+            "description": "",
+            "valuation": "Not disclosed",
+            "update_type": "Other",
             "update": art.get("title", ""),
             "article_date": (art.get("published") or "")[:10],
             "summary": art.get("summary", ""),
@@ -202,7 +215,6 @@ def research_company_update(
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
 
-        # Build article context (cap at 5 to keep prompt size reasonable)
         articles_text = ""
         for i, art in enumerate(new_articles[:5], 1):
             articles_text += (
@@ -211,31 +223,39 @@ def research_company_update(
                 f"  Date:    {art.get('published', 'unknown')}\n"
                 f"  Source:  {art.get('source', '')}\n"
                 f"  URL:     {art.get('url', '')}\n"
-                f"  Snippet: {art.get('summary', '')[:400]}\n"
+                f"  Snippet: {art.get('summary', '')[:500]}\n"
             )
 
+        update_types = ", ".join(f'"{t}"' for t in UPDATE_TYPE_COLORS)
+
         prompt = (
-            f"Research the latest investor-relevant news about the private company '{company}' "
-            f"using the articles below. Select the single most important update for investors.\n"
-            f"\n{articles_text}\n"
-            "Return ONLY a valid JSON object (no markdown, no extra text):\n"
+            f"You are writing an investor briefing entry for the private company: {company}\n\n"
+            f"PART 1 — From YOUR KNOWLEDGE (do not use the articles for these fields):\n"
+            f"• description: What does {company} do? One plain-English sentence.\n"
+            f"• valuation: What is {company}'s most recently reported valuation "
+            f"(e.g. '$65B as of 2024')? If truly unknown, write 'Not publicly disclosed'.\n\n"
+            f"PART 2 — From the ARTICLES BELOW, find the single most investor-relevant recent update.\n"
+            f"If an article mentions a newer valuation than your knowledge, use that for the valuation field.\n"
+            f"{articles_text}\n"
+            f"Return ONLY valid JSON (no markdown fences, no extra text):\n"
             "{\n"
             f'  "company": "{company}",\n'
-            '  "description": "one plain-English sentence describing what the company does",\n'
-            '  "valuation": "latest known valuation (e.g. $10B) or N/A if not mentioned",\n'
-            '  "update": "one sentence describing the key investor-relevant news",\n'
+            '  "description": "from your knowledge: one sentence on what the company does",\n'
+            '  "valuation": "from your knowledge (updated if articles have newer figure): e.g. $65B",\n'
+            f'  "update_type": one of [{update_types}],\n'
+            '  "update": "one sentence — the key investor-relevant news from the articles",\n'
             '  "article_date": "date of the article used (e.g. Mar 10, 2026)",\n'
-            '  "summary": "2-3 sentence plain-English summary of why this news matters to investors",\n'
-            '  "url": "URL of the primary article used",\n'
-            '  "source": "name of the publication"\n'
+            '  "summary": "2-3 sentences: what happened and why it matters to a private market investor",\n'
+            '  "url": "URL of the primary article",\n'
+            '  "source": "publication name"\n'
             "}\n\n"
-            f"If none of the articles contain investor-relevant news about {company}, "
+            f"If none of the articles contain useful investor news about {company}, "
             'return exactly: {"skip": true}'
         )
 
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=600,
+            max_tokens=700,
             system=_INVESTOR_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -253,16 +273,20 @@ def research_company_update(
             logger.info("Claude found no investor-relevant news for %s.", company)
             return None
 
+        # Ensure update_type is a known value
+        if data.get("update_type") not in UPDATE_TYPE_COLORS:
+            data["update_type"] = "Other"
+
         return data
 
     except Exception as exc:
         logger.warning("Company research failed for '%s': %s", company, exc)
-        # Graceful fallback to raw article data
         art = new_articles[0]
         return {
             "company": company,
-            "description": "N/A",
-            "valuation": "N/A",
+            "description": "",
+            "valuation": "Not publicly disclosed",
+            "update_type": "Other",
             "update": art.get("title", ""),
             "article_date": (art.get("published") or "")[:10],
             "summary": art.get("summary", ""),

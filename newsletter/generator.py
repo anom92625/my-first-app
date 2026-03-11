@@ -197,6 +197,78 @@ def build_html_newsletter(
 </html>"""
 
 
+def _company_card_html(row: dict, index: int) -> str:
+    """
+    Render a single company story card.
+    Design inspired by Axios Pro Deals and Term Sheet (Fortune):
+    - Color-coded update-type badge
+    - Company name + valuation in card header
+    - One-liner company description
+    - Bold update headline
+    - Investor summary paragraph
+    - Source + date footer with read link
+    """
+    from newsletter.summarizer import UPDATE_TYPE_COLORS
+
+    company      = row.get("company", "")
+    description  = row.get("description", "")
+    valuation    = row.get("valuation", "Not publicly disclosed")
+    update_type  = row.get("update_type", "Other")
+    update       = row.get("update", "")
+    article_date = row.get("article_date", "")
+    summary      = row.get("summary", "")
+    url          = row.get("url", "#")
+    source       = row.get("source", "")
+
+    badge_color  = UPDATE_TYPE_COLORS.get(update_type, "#6b7280")
+
+    # Valuation display: dim if not disclosed
+    val_is_known = valuation and valuation.lower() not in ("n/a", "not publicly disclosed", "not disclosed", "")
+    val_color    = "#059669" if val_is_known else MUTED_COLOR   # green if real number
+    val_display  = valuation if val_is_known else "Not disclosed"
+
+    return f"""
+<div style="background:#ffffff;border-radius:10px;border:1px solid #e5e7eb;margin-bottom:18px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+  <!-- Card header: update-type badge + company name + valuation -->
+  <div style="background:#f9fafb;border-bottom:1px solid #e5e7eb;padding:14px 20px;display:table;width:100%;box-sizing:border-box;">
+    <div style="display:table-cell;vertical-align:middle;">
+      <span style="display:inline-block;background:{badge_color};color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">{update_type}</span>
+      <div style="font-size:20px;font-weight:800;color:{BRAND_COLOR};letter-spacing:-0.3px;line-height:1.1;">{company}</div>
+    </div>
+    <div style="display:table-cell;vertical-align:middle;text-align:right;white-space:nowrap;padding-left:16px;">
+      <div style="font-size:22px;font-weight:800;color:{val_color};letter-spacing:-0.5px;">{val_display}</div>
+      <div style="font-size:10px;font-weight:600;color:{MUTED_COLOR};text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">Valuation</div>
+    </div>
+  </div>
+
+  <!-- Card body -->
+  <div style="padding:18px 20px 16px;">
+
+    <!-- Company description (one-liner) -->
+    {"" if not description else f'<p style="margin:0 0 14px;font-size:13px;color:#6b7280;line-height:1.5;font-style:italic;">{description}</p>'}
+
+    <!-- Bold update headline -->
+    <p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#111827;line-height:1.4;">{update}</p>
+
+    <!-- Investor summary -->
+    {"" if not summary else f'<p style="margin:0 0 14px;font-size:14px;color:#374151;line-height:1.65;">{summary}</p>'}
+
+    <!-- Footer: date · source · read link -->
+    <div style="display:table;width:100%;margin-top:4px;">
+      <div style="display:table-cell;vertical-align:middle;">
+        <span style="font-size:12px;color:{MUTED_COLOR};">{article_date}</span>
+        {"" if not source else f' <span style="color:#d1d5db;font-size:12px;">&middot;</span> <span style="font-size:12px;color:{MUTED_COLOR};">{source}</span>'}
+      </div>
+      <div style="display:table-cell;vertical-align:middle;text-align:right;">
+        <a href="{url}" style="font-size:13px;font-weight:600;color:{ACCENT_COLOR};text-decoration:none;" target="_blank">Read article &rarr;</a>
+      </div>
+    </div>
+
+  </div>
+</div>"""
+
+
 def build_watchlist_newsletter(
     user_name: str,
     rows: list[dict],
@@ -205,116 +277,90 @@ def build_watchlist_newsletter(
 ) -> str:
     """
     Build an HTML newsletter for private company watchlist updates.
-    Each row contains: company, description, valuation, update,
-    article_date, summary, url, source.
+    Design inspired by Axios Pro Deals, Term Sheet (Fortune), and Morning Brew:
+    - Story cards per company (not a flat table — better for readability and mobile)
+    - Color-coded update-type badges (Funding Round, IPO, Acquisition, etc.)
+    - Company valuation prominently displayed in card header
+    - Clean dark header + subtle intro banner
     """
+    n = len(rows)
 
     if not rows:
-        table_html = f"""
-<div style="background:#fff;border-radius:8px;padding:32px;text-align:center;border:1px solid #e8e8e8;">
-  <p style="color:{MUTED_COLOR};font-size:15px;margin:0;">
-    No new investor-relevant updates found for your watchlist today. Check back tomorrow.
+        body_html = f"""
+<div style="background:#fff;border-radius:10px;padding:40px 32px;text-align:center;border:1px solid #e5e7eb;">
+  <div style="font-size:36px;margin-bottom:16px;">&#128202;</div>
+  <p style="font-size:16px;font-weight:600;color:#111827;margin:0 0 8px;">No new updates today</p>
+  <p style="font-size:14px;color:{MUTED_COLOR};margin:0;">
+    No investor-relevant news was found for your watchlist. Check back tomorrow.
   </p>
 </div>"""
     else:
-        header_cells = [
-            "Company", "What They Do", "Latest Valuation",
-            "Key Update", "Article Date", "Summary", "Source",
-        ]
-        th_style = (
-            f"padding:11px 14px;text-align:left;font-size:11px;font-weight:700;"
-            f"text-transform:uppercase;letter-spacing:0.8px;color:#fff;"
-            f"background:{BRAND_COLOR};white-space:nowrap;"
+        cards = "".join(_company_card_html(row, i) for i, row in enumerate(rows))
+        body_html = f"""
+<p style="margin:0 0 16px;font-size:11px;font-weight:700;color:{MUTED_COLOR};text-transform:uppercase;letter-spacing:1.5px;">
+  {n} Update{"s" if n != 1 else ""} &mdash; {date_str}
+</p>
+{cards}"""
+
+    # "In this brief" summary bar (only when there are rows)
+    if rows:
+        company_pills = "".join(
+            f'<span style="display:inline-block;background:rgba(255,255,255,0.12);color:rgba(255,255,255,0.9);'
+            f'font-size:12px;font-weight:600;padding:4px 11px;border-radius:20px;'
+            f'border:1px solid rgba(255,255,255,0.2);margin:3px 4px 3px 0;">'
+            f'{r.get("company", "")}</span>'
+            for r in rows
         )
-        header_row = "".join(f'<th style="{th_style}">{h}</th>' for h in header_cells)
-
-        row_html_parts = []
-        for i, row in enumerate(rows):
-            bg = "#ffffff" if i % 2 == 0 else "#f8f9fc"
-            td = f"padding:12px 14px;vertical-align:top;font-size:13px;border-bottom:1px solid #eee;background:{bg};"
-            url = row.get("url", "#")
-            source = row.get("source", "")
-            company = row.get("company", "")
-            valuation = row.get("valuation", "N/A")
-            val_color = ACCENT_COLOR if valuation != "N/A" else MUTED_COLOR
-
-            row_html_parts.append(
-                f'<tr>'
-                f'<td style="{td}font-weight:700;color:{BRAND_COLOR};white-space:nowrap;">{company}</td>'
-                f'<td style="{td}color:#444;">{row.get("description", "")}</td>'
-                f'<td style="{td}font-weight:600;color:{val_color};white-space:nowrap;">{valuation}</td>'
-                f'<td style="{td}color:#333;">{row.get("update", "")}</td>'
-                f'<td style="{td}color:{MUTED_COLOR};white-space:nowrap;">{row.get("article_date", "")}</td>'
-                f'<td style="{td}color:#444;line-height:1.5;">{row.get("summary", "")}</td>'
-                f'<td style="{td}"><a href="{url}" style="color:{ACCENT_COLOR};text-decoration:none;font-weight:600;" '
-                f'target="_blank">{source}</a>'
-                f'<br><a href="{url}" style="color:{MUTED_COLOR};font-size:11px;" target="_blank">Read &rarr;</a></td>'
-                f'</tr>'
-            )
-
-        rows_html = "\n".join(row_html_parts)
-        table_html = f"""
-<div style="overflow-x:auto;border-radius:8px;border:1px solid #e8e8e8;">
-  <table style="width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <thead><tr>{header_row}</tr></thead>
-    <tbody>{rows_html}</tbody>
-  </table>
-</div>"""
-
-    company_list = ", ".join(r.get("company", "") for r in rows) if rows else "your watchlist"
-    intro = (
-        f"Here is your private market intelligence update for {date_str}. "
-        f"Covering {len(rows)} update{'s' if len(rows) != 1 else ''} across your watchlist."
-    )
+        toc_html = f'<div style="margin-top:14px;">{company_pills}</div>'
+    else:
+        toc_html = ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Private Market Brief — {date_str}</title>
+  <title>Private Market Brief &mdash; {date_str}</title>
 </head>
-<body style="margin:0;padding:0;background:{BG_COLOR};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-<div style="max-width:900px;margin:0 auto;padding:24px 16px;">
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="max-width:660px;margin:0 auto;padding:28px 16px 40px;">
 
-  <!-- HEADER -->
-  <div style="background:{BRAND_COLOR};border-radius:10px 10px 0 0;padding:28px 32px;text-align:center;margin-bottom:0;">
-    <div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;">Private Market Intelligence</div>
-    <h1 style="margin:0;font-size:26px;font-weight:800;color:#fff;">{date_str}</h1>
-    <div style="width:40px;height:3px;background:{ACCENT_COLOR};margin:12px auto 0;border-radius:2px;"></div>
+  <!-- ── HEADER ── -->
+  <div style="background:{BRAND_COLOR};border-radius:12px 12px 0 0;padding:30px 32px 24px;text-align:center;">
+    <div style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:2.5px;margin-bottom:8px;">Private Market Intelligence</div>
+    <h1 style="margin:0;font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">{date_str}</h1>
+    <div style="width:36px;height:3px;background:{ACCENT_COLOR};border-radius:2px;margin:14px auto 0;"></div>
   </div>
 
-  <!-- INTRO BANNER -->
-  <div style="background:#16213e;border-radius:0 0 10px 10px;padding:18px 32px 22px;margin-bottom:24px;">
-    <p style="margin:0;font-size:15px;line-height:1.7;color:rgba(255,255,255,0.85);">
-      Good morning, {user_name}. {intro}
+  <!-- ── INTRO BAND ── -->
+  <div style="background:#16213e;border-radius:0 0 12px 12px;padding:18px 32px 22px;margin-bottom:28px;">
+    <p style="margin:0 0 4px;font-size:15px;line-height:1.7;color:rgba(255,255,255,0.88);">
+      Good morning, {user_name}. Your watchlist has {n} new update{"s" if n != 1 else ""} today.
+    </p>
+    {toc_html}
+  </div>
+
+  <!-- ── STORY CARDS ── -->
+  {body_html}
+
+  <!-- ── DISCLAIMER ── -->
+  <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:14px 18px;margin-top:24px;margin-bottom:24px;">
+    <p style="margin:0;font-size:12px;color:#92400e;line-height:1.6;">
+      <strong>Disclaimer:</strong> All updates are sourced from publicly available news articles.
+      This brief is for informational purposes only and does not constitute investment advice.
+      Always verify information independently before making any investment decisions.
     </p>
   </div>
 
-  <!-- COMPANY TABLE -->
-  <div style="margin-bottom:24px;">
-    <p style="margin:0 0 14px;font-size:12px;font-weight:700;color:{MUTED_COLOR};text-transform:uppercase;letter-spacing:1px;">Watchlist Updates</p>
-    {table_html}
-  </div>
-
-  <!-- DISCLAIMER -->
-  <div style="background:#fff8f0;border:1px solid #ffe0b2;border-radius:8px;padding:14px 20px;margin-bottom:20px;">
-    <p style="margin:0;font-size:12px;color:#7c4e00;line-height:1.6;">
-      <strong>Disclaimer:</strong> All information is sourced from publicly available news articles.
-      This newsletter is for informational purposes only and does not constitute investment advice.
-      Always verify information independently before making investment decisions.
-    </p>
-  </div>
-
-  <!-- FOOTER -->
-  <div style="text-align:center;padding:20px 0 12px;">
+  <!-- ── FOOTER ── -->
+  <div style="text-align:center;padding:8px 0 4px;">
     <p style="margin:0 0 6px;font-size:12px;color:{MUTED_COLOR};">
       You're receiving this because you subscribed to My Daily Brief.
     </p>
     <p style="margin:0;font-size:12px;">
       <a href="{unsubscribe_url}" style="color:{MUTED_COLOR};text-decoration:underline;">Unsubscribe</a>
     </p>
-    <p style="margin:12px 0 0;font-size:11px;color:#bbb;">My Daily Brief &copy; {date_str[-4:]}</p>
+    <p style="margin:10px 0 0;font-size:11px;color:#9ca3af;">My Daily Brief &copy; {date_str[-4:]}</p>
   </div>
 
 </div>
@@ -332,25 +378,23 @@ def build_plain_text_watchlist_newsletter(
         f"PRIVATE MARKET BRIEF — {date_str}",
         "=" * 60,
         "",
-        f"Good morning, {user_name}.",
-        f"{len(rows)} update(s) across your watchlist.",
+        f"Good morning, {user_name}. {len(rows)} update(s) across your watchlist.",
         "",
-        f"{'Company':<20} {'Valuation':<12} {'Update':<40} {'Source':<20}",
-        "-" * 60,
     ]
     for row in rows:
         lines += [
-            "",
+            f"[ {row.get('update_type', 'Update').upper()} ]",
             f"COMPANY:    {row.get('company', '')}",
+            f"VALUATION:  {row.get('valuation', 'Not disclosed')}",
             f"WHAT:       {row.get('description', '')}",
-            f"VALUATION:  {row.get('valuation', 'N/A')}",
             f"UPDATE:     {row.get('update', '')}",
-            f"DATE:       {row.get('article_date', '')}",
             f"SUMMARY:    {row.get('summary', '')}",
-            f"SOURCE:     {row.get('source', '')}",
+            f"DATE:       {row.get('article_date', '')}  |  {row.get('source', '')}",
             f"LINK:       {row.get('url', '')}",
+            "-" * 60,
+            "",
         ]
-    lines += ["", "=" * 60, "My Daily Brief — Private Market Intelligence"]
+    lines += ["My Daily Brief — Private Market Intelligence"]
     return "\n".join(lines)
 
 
