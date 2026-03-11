@@ -3,24 +3,105 @@
 
 {% block extra_head %}
 <style>
-  .wl-header {
-    text-align: center;
-    margin-bottom: 32px;
-  }
+  .wl-header { text-align: center; margin-bottom: 32px; }
   .wl-header h1 { font-size: 30px; margin-bottom: 10px; }
   .wl-header p { color: #666; font-size: 16px; max-width: 520px; margin: 0 auto; line-height: 1.6; }
 
-  .add-form {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 28px;
-    flex-wrap: wrap;
+  /* ── Autocomplete wrapper ── */
+  .ac-wrap { position: relative; flex: 1; min-width: 220px; }
+
+  .ac-wrap input[type="text"] {
+    width: 100%;
+    padding: 11px 36px 11px 14px;   /* right padding for clear btn */
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    font-family: inherit;
+    transition: border-color 0.15s;
+    outline: none;
+    background: #fafafa;
   }
-  .add-form input[type="text"] {
-    flex: 1;
-    min-width: 220px;
+  .ac-wrap input:focus { border-color: var(--accent); background: #fff; }
+
+  .ac-clear {
+    position: absolute;
+    right: 10px; top: 50%;
+    transform: translateY(-50%);
+    background: none; border: none;
+    color: #aaa; font-size: 16px;
+    cursor: pointer; padding: 2px 4px;
+    display: none;
+    line-height: 1;
+  }
+  .ac-clear:hover { color: var(--accent); }
+  .ac-wrap.has-value .ac-clear { display: block; }
+
+  /* ── Dropdown list ── */
+  .ac-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: #fff;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.10);
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 200;
+    display: none;
+  }
+  .ac-list.open { display: block; }
+
+  .ac-item {
+    padding: 10px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: background 0.1s;
+    border-bottom: 1px solid #f3f3f3;
+  }
+  .ac-item:last-child { border-bottom: none; }
+  .ac-item:hover,
+  .ac-item.active { background: #fff5f6; color: var(--accent); }
+  .ac-item.active { font-weight: 600; }
+
+  .ac-item-icon {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #aaa;
+    flex-shrink: 0;
+  }
+  .ac-item.active .ac-item-icon,
+  .ac-item:hover .ac-item-icon { color: var(--accent); }
+
+  .ac-item em { font-style: normal; font-weight: 700; color: var(--accent); }
+
+  .ac-empty {
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #888;
+    font-style: italic;
   }
 
+  .ac-custom-hint {
+    padding: 9px 14px;
+    font-size: 12px;
+    color: #888;
+    border-top: 1px solid #f0f0f0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ac-custom-hint strong { color: #333; font-weight: 600; }
+
+  /* ── Add form row ── */
+  .add-form { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+
+  /* ── Company list ── */
   .company-list { list-style: none; margin: 0; padding: 0; }
   .company-item {
     display: flex;
@@ -29,25 +110,18 @@
     gap: 16px;
     padding: 14px 20px;
     background: #fff;
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--border);
     border-radius: 10px;
     margin-bottom: 10px;
     transition: box-shadow 0.15s;
   }
   .company-item:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.07); }
-  .company-name {
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--brand);
-  }
-  .company-added {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
+  .company-name { font-size: 16px; font-weight: 700; color: var(--brand); }
+  .company-added { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
   .remove-btn {
     background: transparent;
-    border: 1.5px solid #e8e8e8;
+    border: 1.5px solid var(--border);
     color: var(--muted);
     padding: 6px 14px;
     border-radius: 6px;
@@ -57,42 +131,35 @@
     transition: all 0.15s;
     flex-shrink: 0;
   }
-  .remove-btn:hover {
-    border-color: var(--danger);
-    color: var(--danger);
-    background: #fff5f5;
-  }
+  .remove-btn:hover { border-color: var(--danger); color: var(--danger); background: #fff5f5; }
 
   .empty-watchlist {
-    text-align: center;
-    padding: 48px 24px;
-    background: #fff;
-    border: 1px dashed #ddd;
-    border-radius: 12px;
-    color: #888;
+    text-align: center; padding: 48px 24px;
+    background: #fff; border: 1px dashed #ddd; border-radius: 12px; color: #888;
   }
   .empty-watchlist p { font-size: 15px; margin-bottom: 8px; }
   .empty-watchlist span { font-size: 13px; color: #bbb; }
 
   .tip-box {
-    background: #f0f4ff;
-    border: 1px solid #c7d2fe;
-    border-radius: 10px;
-    padding: 16px 20px;
-    margin-bottom: 24px;
-    font-size: 14px;
-    color: #3730a3;
-    line-height: 1.5;
+    background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 10px;
+    padding: 16px 20px; margin-bottom: 24px; font-size: 14px; color: #3730a3; line-height: 1.5;
   }
 
   .wl-count {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--muted);
-    margin-bottom: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;
   }
+
+  .popular-chips {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+  }
+  .popular-chip {
+    background: #f3f4f6; border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 13px;
+    font-size: 13px; font-weight: 500; color: #444;
+    cursor: pointer; transition: all 0.15s; user-select: none;
+  }
+  .popular-chip:hover { background: #fff0f2; border-color: var(--accent); color: var(--accent); }
 </style>
 {% endblock %}
 
@@ -100,35 +167,56 @@
 <div class="wl-header">
   <h1>Company Watchlist</h1>
   <p>
-    Add private companies you want to track. Your daily brief will research
-    the latest news on each company and surface what matters most to investors.
+    Track private companies you care about. Each brief researches the latest
+    investor-relevant news — funding, valuations, key moves — and surfaces only
+    what's new.
   </p>
 </div>
 
 <div class="tip-box">
-  <strong>How it works:</strong> Each day, Claude scans the web for the latest
-  news on your watchlisted companies — funding rounds, valuations, key hires,
-  product launches, and more — and compiles it into a clean investor briefing table.
-  Only new information is included; nothing is ever repeated.
+  <strong>How it works:</strong> Claude scans the web daily for each company on your list,
+  identifies the most important investor-relevant development, and writes a concise briefing.
+  Nothing is repeated across editions.
 </div>
 
 <!-- ADD COMPANY FORM -->
 <div class="card" style="margin-bottom:28px;">
-  <h3 style="margin-bottom:14px;">Add a company</h3>
-  <form method="post" action="{{ url_for('watchlist') }}" class="add-form">
-    <input
-      type="text"
-      name="company_name"
-      placeholder="e.g. SpaceX, Stripe, OpenAI, Databricks…"
-      maxlength="200"
-      autocomplete="off"
-      autofocus
-    >
-    <button type="submit" class="btn btn-primary">Add to watchlist</button>
-  </form>
-  <p style="font-size:13px;color:#999;margin:0;">
-    Enter the company's commonly known name. You can add up to 20 companies.
+  <h3 style="margin-bottom:6px;">Add a company</h3>
+  <p style="font-size:13px;color:#888;margin-bottom:16px;">
+    Choose from the list of top private companies or type any name.
   </p>
+
+  <form method="post" action="{{ url_for('watchlist') }}" id="add-form">
+    <div class="add-form">
+      <div class="ac-wrap" id="ac-wrap">
+        <input
+          type="text"
+          name="company_name"
+          id="company-input"
+          placeholder="Search or type a company name…"
+          maxlength="200"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <button type="button" class="ac-clear" id="ac-clear" title="Clear" aria-label="Clear">&#x2715;</button>
+        <div class="ac-list" id="ac-list" role="listbox" aria-label="Company suggestions"></div>
+      </div>
+      <button type="submit" class="btn btn-primary">Add to watchlist</button>
+    </div>
+  </form>
+
+  <!-- Quick-add popular chips -->
+  <div style="margin-top:4px;">
+    <p style="font-size:12px;color:#aaa;margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Quick add</p>
+    <div class="popular-chips" id="quick-chips">
+      {% set already = companies | map(attribute='name') | map('lower') | list %}
+      {% for co in popular_companies[:20] %}
+        {% if co | lower not in already %}
+          <span class="popular-chip" data-name="{{ co }}">+ {{ co }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
 </div>
 
 <!-- COMPANY LIST -->
@@ -149,19 +237,15 @@
     {% endfor %}
   </ul>
 
-  <!-- GENERATE BUTTON -->
   <div style="margin-top:28px;text-align:center;">
-    <form method="post" action="{{ url_for('generate_now') }}" id="gen-form">
-      <button type="submit" class="btn btn-primary btn-lg" id="gen-btn"
-              onclick="this.textContent='Researching...';this.disabled=true;this.closest('form').submit();">
+    <form method="post" action="{{ url_for('generate_now') }}">
+      <button type="submit" class="btn btn-primary btn-lg"
+              onclick="this.textContent='Researching…';this.disabled=true;this.closest('form').submit();">
         Generate my brief now
       </button>
     </form>
-    <p style="margin-top:12px;font-size:13px;color:#999;">
-      Research takes 30–90 seconds depending on your watchlist size.
-    </p>
+    <p style="margin-top:12px;font-size:13px;color:#999;">Research takes 30–90 seconds depending on watchlist size.</p>
   </div>
-
 {% else %}
   <div class="empty-watchlist">
     <p>Your watchlist is empty.</p>
@@ -174,4 +258,138 @@
   <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to dashboard</a>
 </div>
 {% endif %}
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────
+const ALL_COMPANIES = {{ popular_companies | tojson }};
+const ALREADY_ADDED = new Set({{ companies | map(attribute='name') | list | tojson }}.map(s => s.toLowerCase()));
+
+// ── Elements ─────────────────────────────────────────────────────────────
+const input   = document.getElementById('company-input');
+const list    = document.getElementById('ac-list');
+const wrap    = document.getElementById('ac-wrap');
+const clearBtn = document.getElementById('ac-clear');
+let activeIdx = -1;
+
+// ── Autocomplete logic ────────────────────────────────────────────────────
+function highlight(text, query) {
+  if (!query) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return text.slice(0, idx)
+    + '<em>' + text.slice(idx, idx + query.length) + '</em>'
+    + text.slice(idx + query.length);
+}
+
+function renderList(query) {
+  const q = query.trim().toLowerCase();
+  list.innerHTML = '';
+  activeIdx = -1;
+
+  if (!q) {
+    list.classList.remove('open');
+    return;
+  }
+
+  const matches = ALL_COMPANIES.filter(c =>
+    c.toLowerCase().includes(q) && !ALREADY_ADDED.has(c.toLowerCase())
+  ).slice(0, 10);
+
+  if (matches.length === 0 && q.length < 2) {
+    list.classList.remove('open');
+    return;
+  }
+
+  matches.forEach((company, i) => {
+    const item = document.createElement('div');
+    item.className = 'ac-item';
+    item.setAttribute('role', 'option');
+    item.dataset.idx = i;
+    item.innerHTML = `<span class="ac-item-icon">&#x2726;</span>${highlight(company, q)}`;
+    item.addEventListener('mousedown', e => { e.preventDefault(); selectCompany(company); });
+    list.appendChild(item);
+  });
+
+  // "Add custom" hint when query doesn't exactly match any suggestion
+  const exactMatch = ALL_COMPANIES.some(c => c.toLowerCase() === q);
+  if (!exactMatch) {
+    const hint = document.createElement('div');
+    hint.className = 'ac-custom-hint';
+    hint.innerHTML = `<span>&#x270F;</span> Press <strong>Enter</strong> or click <strong>Add to watchlist</strong> to add "<strong>${query.trim()}</strong>"`;
+    list.appendChild(hint);
+  }
+
+  list.classList.add('open');
+}
+
+function selectCompany(name) {
+  input.value = name;
+  list.classList.remove('open');
+  updateClearBtn();
+  // Auto-submit immediately on selection from list
+  document.getElementById('add-form').submit();
+}
+
+function updateClearBtn() {
+  wrap.classList.toggle('has-value', input.value.length > 0);
+}
+
+// ── Events ────────────────────────────────────────────────────────────────
+input.addEventListener('input', () => {
+  renderList(input.value);
+  updateClearBtn();
+});
+
+input.addEventListener('keydown', e => {
+  const items = list.querySelectorAll('.ac-item');
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeIdx = Math.min(activeIdx + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+    if (items[activeIdx]) input.value = items[activeIdx].textContent.replace(/[★✦]/g, '').trim();
+    updateClearBtn();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeIdx = Math.max(activeIdx - 1, -1);
+    items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+  } else if (e.key === 'Escape') {
+    list.classList.remove('open');
+    activeIdx = -1;
+  } else if (e.key === 'Enter' && activeIdx >= 0 && items[activeIdx]) {
+    e.preventDefault();
+    const name = items[activeIdx].textContent.replace(/[★✦]/g, '').trim();
+    selectCompany(name);
+  }
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  if (!wrap.contains(e.target)) list.classList.remove('open');
+});
+
+input.addEventListener('focus', () => {
+  if (input.value.length > 0) renderList(input.value);
+});
+
+clearBtn.addEventListener('click', () => {
+  input.value = '';
+  list.classList.remove('open');
+  updateClearBtn();
+  input.focus();
+});
+
+// Strip HTML from item text before form submit (avoid any tag leakage)
+document.getElementById('add-form').addEventListener('submit', () => {
+  list.classList.remove('open');
+});
+
+// ── Quick-add chips ───────────────────────────────────────────────────────
+document.querySelectorAll('.popular-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    input.value = chip.dataset.name;
+    document.getElementById('add-form').submit();
+  });
+});
+</script>
 {% endblock %}

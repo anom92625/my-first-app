@@ -6,6 +6,41 @@ import os
 from datetime import datetime, timezone
 from functools import wraps
 
+# Top private companies shown as suggestions in the watchlist autocomplete.
+# Sorted alphabetically; users can still type any name not on this list.
+TOP_PRIVATE_COMPANIES: list[str] = sorted([
+    # AI / ML
+    "Anthropic", "OpenAI", "xAI", "Cohere", "Mistral AI", "Perplexity AI",
+    "Character.ai", "Hugging Face", "Scale AI", "Together AI", "Groq",
+    "Stability AI", "Midjourney", "Runway ML", "Weights & Biases",
+    "Harvey", "Glean", "Writer", "Adept AI", "Inflection AI",
+    # Enterprise SaaS / Infrastructure
+    "Databricks", "Celonis", "Rippling", "Deel", "Lattice", "Carta",
+    "Retool", "Notion", "Linear", "Vercel", "dbt Labs", "Airbyte",
+    "Fivetran", "Monte Carlo Data", "Navan", "Remote",
+    # Fintech
+    "Stripe", "Chime", "Revolut", "Klarna", "Brex", "Ramp", "Plaid",
+    "Checkout.com", "Upgrade", "Bolt", "Varo Bank", "Marqeta",
+    "MoonPay", "Ripple", "Kraken",
+    # Cybersecurity
+    "Wiz", "Snyk", "Lacework", "Abnormal Security", "Arctic Wolf",
+    "Coalition", "At-Bay", "Orca Security",
+    # Space / Defense / Deep Tech
+    "SpaceX", "Relativity Space", "Vast Space", "Astranis", "Anduril Industries",
+    "Applied Intuition", "Shield AI", "Joby Aviation", "Archer Aviation",
+    # Autonomous / Mobility
+    "Waymo", "Aurora", "Nuro", "Cruise", "Zoox",
+    # Consumer / Social
+    "Discord", "Canva", "Epic Games", "ByteDance", "Shein",
+    "Instacart", "Faire", "Flexport",
+    # Health
+    "Devoted Health", "Nomi Health", "Cityblock Health",
+    # Crypto / Web3
+    "Gemini", "Fireblocks", "Chainalysis",
+    # Other notable
+    "Cerebras", "CoreWeave", "Lambda Labs", "CloudKitchens",
+])
+
 from flask import (
     Flask,
     flash,
@@ -195,7 +230,11 @@ def watchlist():
         return redirect(url_for("watchlist"))
 
     companies = current_user.watchlist
-    return render_template("watchlist.html", companies=companies)
+    return render_template(
+        "watchlist.html",
+        companies=companies,
+        popular_companies=TOP_PRIVATE_COMPANIES,
+    )
 
 
 @app.route("/watchlist/remove/<int:company_id>", methods=["POST"])
