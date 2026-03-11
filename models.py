@@ -83,6 +83,8 @@ class Newsletter(db.Model):
     was_emailed = db.Column(db.Boolean, default=False)
     # JSON list of article URLs included in this newsletter (for deduplication)
     article_urls = db.Column(db.Text, default="[]")
+    # JSON list of company names covered (for "only new" banner in next issue)
+    companies_json = db.Column(db.Text, default="[]")
 
     user = db.relationship("User", back_populates="newsletters")
 
