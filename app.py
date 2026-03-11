@@ -6,6 +6,41 @@ import os
 from datetime import datetime, timezone
 from functools import wraps
 
+# Top private companies shown as suggestions in the watchlist autocomplete.
+# Sorted alphabetically; users can still type any name not on this list.
+TOP_PRIVATE_COMPANIES: list[str] = sorted([
+    # AI / ML
+    "Anthropic", "OpenAI", "xAI", "Cohere", "Mistral AI", "Perplexity AI",
+    "Character.ai", "Hugging Face", "Scale AI", "Together AI", "Groq",
+    "Stability AI", "Midjourney", "Runway ML", "Weights & Biases",
+    "Harvey", "Glean", "Writer", "Adept AI", "Inflection AI",
+    # Enterprise SaaS / Infrastructure
+    "Databricks", "Celonis", "Rippling", "Deel", "Lattice", "Carta",
+    "Retool", "Notion", "Linear", "Vercel", "dbt Labs", "Airbyte",
+    "Fivetran", "Monte Carlo Data", "Navan", "Remote",
+    # Fintech
+    "Stripe", "Chime", "Revolut", "Klarna", "Brex", "Ramp", "Plaid",
+    "Checkout.com", "Upgrade", "Bolt", "Varo Bank", "Marqeta",
+    "MoonPay", "Ripple", "Kraken",
+    # Cybersecurity
+    "Wiz", "Snyk", "Lacework", "Abnormal Security", "Arctic Wolf",
+    "Coalition", "At-Bay", "Orca Security",
+    # Space / Defense / Deep Tech
+    "SpaceX", "Relativity Space", "Vast Space", "Astranis", "Anduril Industries",
+    "Applied Intuition", "Shield AI", "Joby Aviation", "Archer Aviation",
+    # Autonomous / Mobility
+    "Waymo", "Aurora", "Nuro", "Cruise", "Zoox",
+    # Consumer / Social
+    "Discord", "Canva", "Epic Games", "ByteDance", "Shein",
+    "Instacart", "Faire", "Flexport",
+    # Health
+    "Devoted Health", "Nomi Health", "Cityblock Health",
+    # Crypto / Web3
+    "Gemini", "Fireblocks", "Chainalysis",
+    # Other notable
+    "Cerebras", "CoreWeave", "Lambda Labs", "CloudKitchens",
+])
+
 from flask import (
     Flask,
     flash,
@@ -33,10 +68,12 @@ from newsletter.generator import (
     build_watchlist_newsletter,
     build_plain_text_watchlist_newsletter,
 )
+import json as _json
 from newsletter.mailer import send_newsletter
 from newsletter.scheduler import start_scheduler, stop_scheduler
 from newsletter.summarizer import (
     generate_newsletter_intro,
+    generate_newsletter_narrative,
     research_company_update,
     summarize_articles,
 )
@@ -193,7 +230,11 @@ def watchlist():
         return redirect(url_for("watchlist"))
 
     companies = current_user.watchlist
-    return render_template("watchlist.html", companies=companies)
+    return render_template(
+        "watchlist.html",
+        companies=companies,
+        popular_companies=TOP_PRIVATE_COMPANIES,
+    )
 
 
 @app.route("/watchlist/remove/<int:company_id>", methods=["POST"])
@@ -262,7 +303,7 @@ def generate_now():
     date_str = now.strftime("%A, %B %-d, %Y")
 
     try:
-        # Collect URLs from the last 7 newsletters to avoid repeating content
+        # Collect URLs + previous companies from last 7 newsletters (deduplication)
         past_newsletters = (
             Newsletter.query.filter_by(user_id=current_user.id)
             .order_by(Newsletter.sent_at.desc())
@@ -273,7 +314,18 @@ def generate_now():
         for nl in past_newsletters:
             seen_urls.update(nl.get_article_urls())
 
-        # Fetch news for each company
+        # Previous-edition company list for the "only new" banner
+        previous_companies: list[str] = []
+        if past_newsletters:
+            try:
+                previous_companies = _json.loads(past_newsletters[0].companies_json or "[]")
+            except Exception:
+                pass
+
+        # Volume number = total newsletters so far + 1
+        vol_number = Newsletter.query.filter_by(user_id=current_user.id).count() + 1
+
+        # Fetch news articles for each watchlisted company
         company_names = [c.name for c in companies]
         articles_by_company = fetch_articles_for_companies(
             company_names,
@@ -281,7 +333,7 @@ def generate_now():
             news_api_key=cfg.NEWS_API_KEY,
         )
 
-        # Research each company with Claude
+        # Research each company with Claude (description + valuation from training knowledge)
         rows = []
         all_used_urls: list[str] = []
         for company_name in company_names:
@@ -297,21 +349,39 @@ def generate_now():
                 if row.get("url"):
                     all_used_urls.append(row["url"])
 
-        unsubscribe_url = url_for("unsubscribe", user_id=current_user.id, _external=True)
-        html = build_watchlist_newsletter(
-            current_user.name.split()[0], rows, date_str, unsubscribe_url
-        )
-        plain = build_plain_text_watchlist_newsletter(
-            current_user.name.split()[0], rows, date_str
+        # Generate editorial narrative (headline, deck, stats, analyst takes)
+        meta = generate_newsletter_narrative(
+            rows=rows,
+            previous_companies=previous_companies,
+            date_str=date_str,
+            vol_number=vol_number,
+            api_key=cfg.ANTHROPIC_API_KEY,
         )
 
-        subject = f"Private Market Brief — {date_str}"
+        unsubscribe_url = url_for("unsubscribe", user_id=current_user.id, _external=True)
+        html = build_watchlist_newsletter(
+            user_name=current_user.name.split()[0],
+            rows=rows,
+            meta=meta,
+            date_str=date_str,
+            vol_number=vol_number,
+            unsubscribe_url=unsubscribe_url,
+        )
+        plain = build_plain_text_watchlist_newsletter(
+            user_name=current_user.name.split()[0],
+            rows=rows,
+            date_str=date_str,
+            vol_number=vol_number,
+        )
+
+        subject = f"Private Markets Insider — Vol. {vol_number:02d} — {date_str}"
         record = Newsletter(
             user_id=current_user.id,
             subject=subject,
             html_content=html,
         )
         record.set_article_urls(all_used_urls)
+        record.companies_json = _json.dumps([r["company"] for r in rows])
         db.session.add(record)
 
         # Attempt to email it
