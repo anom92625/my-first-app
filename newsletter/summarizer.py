@@ -154,6 +154,105 @@ def generate_newsletter_intro(
 # Investor watchlist research (company-focused newsletter)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Known approximate valuations for top private companies.
+# Used to seed the prompt so Claude always has a concrete figure to work with
+# rather than writing "Not publicly disclosed".  Values are last-reported
+# estimates and will be superseded if a more recent figure appears in articles.
+# ---------------------------------------------------------------------------
+_KNOWN_VALUATIONS: dict[str, str] = {
+    # AI / ML
+    "OpenAI":            "$157B",
+    "Anthropic":         "$61B",
+    "xAI":               "$50B",
+    "Databricks":        "$62B",
+    "Scale AI":          "$13.8B",
+    "Cerebras":          "$23B",
+    "Groq":              "$2.8B",
+    "Hugging Face":      "$4.5B",
+    "Perplexity AI":     "$9B",
+    "Character.ai":      "$5B",
+    "Cohere":            "$5B",
+    "Mistral AI":        "$6B",
+    "Together AI":       "$1.25B",
+    "Stability AI":      "$1B",
+    "Weights & Biases":  "$1.25B",
+    "Harvey":            "$3B",
+    "Glean":             "$4.6B",
+    "Writer":            "$1.9B",
+    "Adept AI":          "$1B",
+    # Fintech
+    "Stripe":            "$70B",
+    "Revolut":           "$45B",
+    "Klarna":            "$15B",
+    "Chime":             "$25B",
+    "Brex":              "$12B",
+    "Ramp":              "$32B",
+    "Plaid":             "$13B",
+    "Checkout.com":      "$11B",
+    "Ripple":            "$15B",
+    "Kraken":            "$20B",
+    "Upgrade":           "$6.3B",
+    "Bolt":              "$11B",
+    "Varo Bank":         "$2.5B",
+    # Enterprise SaaS / Infrastructure
+    "Rippling":          "$13.4B",
+    "Deel":              "$12B",
+    "Celonis":           "$13B",
+    "Navan":             "$9.2B",
+    "Carta":             "$8.5B",
+    "Notion":            "$10B",
+    "Retool":            "$3.2B",
+    "Vercel":            "$3.25B",
+    "dbt Labs":          "$4.2B",
+    "Airbyte":           "$1.5B",
+    "Fivetran":          "$5.6B",
+    "Lattice":           "$3B",
+    "Remote":            "$3B",
+    # Cybersecurity
+    "Wiz":               "$12B",
+    "Snyk":              "$7.4B",
+    "Lacework":          "$8.3B",
+    "Abnormal Security": "$5.1B",
+    "Arctic Wolf":       "$4.3B",
+    "Coalition":         "$5B",
+    "At-Bay":            "$1.35B",
+    "Orca Security":     "$1.8B",
+    # Space / Defense
+    "SpaceX":            "$350B",
+    "Anduril Industries":"$28B",
+    "Applied Intuition": "$12B",
+    "Relativity Space":  "$4.2B",
+    "Vast Space":        "$1.8B",
+    # Autonomous / Mobility
+    "Waymo":             "$45B",
+    "Aurora":            "$3B",
+    "Nuro":              "$8.6B",
+    # Consumer / Social
+    "Discord":           "$15B",
+    "Canva":             "$26B",
+    "Epic Games":        "$32B",
+    "ByteDance":         "$300B",
+    "Shein":             "$66B",
+    "Flexport":          "$3.2B",
+    "Faire":             "$7B",
+    # Crypto / Web3
+    "Gemini":            "$7.1B",
+    "Fireblocks":        "$8B",
+    "Chainalysis":       "$8.6B",
+    "MoonPay":           "$3.4B",
+    # Other
+    "CoreWeave":         "$19B",
+    "Lambda Labs":       "$1.5B",
+    "CloudKitchens":     "$15B",
+    "Midjourney":        "not publicly disclosed (bootstrapped/profitable)",
+    "Runway ML":         "$1.5B",
+    "Joby Aviation":     "$4B",
+    "Archer Aviation":   "$1.8B",
+    "Shield AI":         "$2.8B",
+}
+
+
 _INVESTOR_SYSTEM_PROMPT = """You are a professional investor and expert investor relations professional \
 helping private market investors stay on top of fast-moving private companies.
 
@@ -259,23 +358,32 @@ def research_company_update(
         sectors    = ", ".join(f'"{s}"' for s in _VALID_SECTORS)
         upd_types  = ", ".join(f'"{t}"' for t in _VALID_UPD_TYPES)
 
+        # Seed with known valuation so Claude doesn't default to "Not disclosed"
+        known_val = _KNOWN_VALUATIONS.get(company, "")
+        val_instruction = (
+            f"Use '{known_val}' as the baseline valuation (update it only if an article "
+            f"contains a more recent figure)."
+            if known_val else
+            "Use the most recently reported valuation from your training knowledge, "
+            "or 'Not publicly disclosed' if genuinely unknown."
+        )
+
         prompt = (
             f"Write an investor briefing row for the private company: {company}\n\n"
             f"PART 1 — Use YOUR TRAINING KNOWLEDGE for these fields (not the articles):\n"
             f"• sector:      Industry sector. One of [{sectors}]\n"
             f"• description: What does {company} do? One plain-English sentence.\n"
-            f"• valuation:   Most recently reported valuation (e.g. '$65B'). "
-            f"Write 'Not publicly disclosed' if unknown.\n\n"
+            f"• valuation:   {val_instruction}\n\n"
             f"PART 2 — From the ARTICLES BELOW, pick the single most investor-relevant update.\n"
-            f"• If an article mentions a newer valuation, use it instead of your training figure.\n"
+            f"• If an article mentions a newer valuation, use it instead of the baseline above.\n"
             f"• In the summary field, bold key numbers and names using <strong> tags.\n"
             f"{articles_text}\n"
             f"Return ONLY valid JSON (no markdown fences):\n"
             "{{\n"
             f'  "company": "{company}",\n'
             f'  "sector": one of [{sectors}],\n'
-            '  "description": "one plain-English sentence from your knowledge",\n'
-            '  "valuation": "e.g. $65B — from your knowledge, updated if articles have newer figure",\n'
+            '  "description": "one plain-English sentence",\n'
+            '  "valuation": "$XX.XB",\n'
             f'  "update_type": one of [{upd_types}],\n'
             '  "update": "one sentence — the key investor-relevant news headline",\n'
             '  "article_date": "date of the article (e.g. Mar 10, 2026)",\n'
@@ -462,3 +570,172 @@ def _default_narrative(
         "only_new_text": prev_str,
         "analyst_takes": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Deals & Fundraising section
+# ---------------------------------------------------------------------------
+
+DEAL_TYPES = [
+    "Fundraise",       # Standard up-round equity raise
+    "Down Round",      # Raise at a lower valuation than prior round — distress signal
+    "Bridge Round",    # Short-term capital to extend runway — often precedes restructuring
+    "Fund Close",      # VC/PE fund reaching a close — LP intelligence
+    "IPO Filing",      # S-1 / F-1 registration statement filed
+    "IPO Priced",      # IPO pricing set; shares to begin trading
+    "Acquisition",     # Company acquired (disclosed buyer)
+    "Exit",            # Founder/investor exit (secondary, buyout, or acqui-hire)
+    "Secondary Sale",  # LP stake or employee share sale on secondary market
+    "SPAC",            # SPAC merger / blank-cheque vehicle
+    "Debt Financing",  # Venture debt, credit facility, or convertible note
+]
+
+_DEALS_SYSTEM_PROMPT = """You are a senior analyst at a top-tier private equity firm. \
+Your job is to extract clean, structured data from raw article titles and snippets about \
+IPOs, fundraising rounds, acquisitions, fund closes, down rounds, and other capital-markets events. \
+Be precise with numbers. Never invent investors, amounts, or valuations not stated in the source text. \
+Write 'Not disclosed' for any field not mentioned. \
+Flag down rounds and bridge rounds explicitly — they are the most important distress signals \
+professional investors track. A down round is any raise at a valuation below the prior round."""
+
+
+def research_deals(
+    articles: list[dict[str, Any]],
+    seen_urls: set[str],
+    api_key: str,
+) -> list[dict[str, Any]]:
+    """
+    Given a list of deal-relevant articles, use Claude to extract up to 8
+    structured deal records covering: deal type, company, round, amount raised,
+    valuation, lead investors, and pricing details (for IPOs).
+
+    Returns a list of deal dicts (may be empty).  Falls back to simple
+    title-based stub records if the API key is absent or the call fails.
+    """
+    new_articles = [a for a in articles if a.get("url", "") not in seen_urls]
+    if not new_articles:
+        return []
+
+    deal_types_str = ", ".join(f'"{t}"' for t in DEAL_TYPES)
+    sectors_str    = ", ".join(f'"{s}"' for s in _VALID_SECTORS)
+
+    # Stub fallback (no API key)
+    if not api_key:
+        stubs = []
+        for art in new_articles[:6]:
+            stubs.append({
+                "company":         "",
+                "deal_type":       "Fundraise",
+                "sector":          "Other",
+                "round":           "",
+                "amount":          "Not disclosed",
+                "valuation":       "Not disclosed",
+                "prior_valuation": "Not disclosed",
+                "lead_investors":  [],
+                "pricing_notes":   "",
+                "is_down_round":   False,
+                "summary":         art.get("title", ""),
+                "article_date":    (art.get("published") or "")[:10],
+                "url":             art.get("url", "#"),
+                "source":          art.get("source", ""),
+            })
+        return stubs
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+
+        articles_text = ""
+        for i, art in enumerate(new_articles[:15], 1):
+            articles_text += (
+                f"\nArticle {i}:\n"
+                f"  Title:   {art.get('title', '')}\n"
+                f"  Date:    {art.get('published', 'unknown')}\n"
+                f"  Source:  {art.get('source', '')}\n"
+                f"  URL:     {art.get('url', '')}\n"
+                f"  Snippet: {art.get('summary', '')[:400]}\n"
+            )
+
+        prompt = (
+            f"Below are {len(new_articles[:15])} news articles. "
+            "Identify every genuine capital-markets event described: fundraising rounds, "
+            "IPO filings/pricings, acquisitions, exits, fund closes, down rounds, "
+            "bridge rounds, secondary sales, debt financings, and SPACs.\n\n"
+            f"{articles_text}\n"
+            "RULES:\n"
+            "- ONLY include articles that describe a specific, named deal or event.\n"
+            "- Skip general opinion, market commentary, and listicles.\n"
+            "- Set deal_type='Down Round' if the new valuation is below the prior round, "
+            "OR if the article explicitly calls it a down round or flat round.\n"
+            "- Set deal_type='Bridge Round' if the article mentions bridge financing, "
+            "extended runway, or convertible note to next round.\n"
+            "- Set deal_type='Fund Close' for VC/PE fund close announcements "
+            "(company = GP firm name, round = fund name e.g. 'Fund IV').\n"
+            "- For IPO filings from SEC EDGAR, set deal_type='IPO Filing'.\n\n"
+            "Return ONLY valid JSON — a top-level array (no markdown fences):\n"
+            "[\n"
+            "  {{\n"
+            f'    "company": "Company or GP firm name",\n'
+            f'    "deal_type": one of [{deal_types_str}],\n'
+            f'    "sector": one of [{sectors_str}],\n'
+            '    "round": "Round label e.g. Series C, Fund IV, Pre-IPO — or empty string",\n'
+            '    "amount": "Amount raised or fund size e.g. $500M — or \\"Not disclosed\\"",\n'
+            '    "valuation": "Post-money valuation if stated e.g. $4.5B — or \\"Not disclosed\\"",\n'
+            '    "prior_valuation": "Prior-round valuation if stated (critical for down rounds) — or \\"Not disclosed\\"",\n'
+            '    "lead_investors": ["Lead investor 1", "Lead investor 2"],\n'
+            '    "pricing_notes": "IPO price range, share price, or other pricing details — or empty string",\n'
+            '    "is_down_round": true or false,\n'
+            '    "summary": "2-3 sentences: what happened, why it matters, key numbers. '
+            'Bold figures and company names with <strong> tags. For down rounds, note the valuation cut explicitly.",\n'
+            '    "article_date": "e.g. Mar 10, 2026",\n'
+            '    "url": "article URL",\n'
+            '    "source": "publication name"\n'
+            "  }}\n"
+            "]\n\n"
+            "Return an empty array [] if no genuine deal articles are found. "
+            "Cap output at 10 deals maximum."
+        )
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2800,
+            system=_DEALS_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = msg.content[0].text.strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.rstrip("`").strip()
+
+        deals = json.loads(raw)
+        if not isinstance(deals, list):
+            return []
+
+        # Normalise fields and cap at 10 deals
+        cleaned = []
+        for d in deals[:10]:
+            if not isinstance(d, dict) or not d.get("company"):
+                continue
+            if d.get("deal_type") not in DEAL_TYPES:
+                d["deal_type"] = "Fundraise"
+            if d.get("sector") not in SECTOR_BADGE:
+                d["sector"] = "Other"
+            if not isinstance(d.get("lead_investors"), list):
+                d["lead_investors"] = []
+            # Ensure boolean
+            d["is_down_round"] = bool(d.get("is_down_round", False))
+            # Force deal_type consistency with flag
+            if d["is_down_round"] and d["deal_type"] == "Fundraise":
+                d["deal_type"] = "Down Round"
+            d.setdefault("prior_valuation", "Not disclosed")
+            cleaned.append(d)
+
+        return cleaned
+
+    except Exception as exc:
+        logger.warning("research_deals failed: %s", exc)
+        return []

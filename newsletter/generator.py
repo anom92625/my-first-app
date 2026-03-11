@@ -271,6 +271,256 @@ def _ipo_grid_html(ipo_rows: list[dict]) -> str:
     )
 
 
+def _deal_card_html(deal: dict[str, Any], index: int) -> str:
+    """Render one deal card for the Deals & Fundraising section."""
+    company        = deal.get("company", "Unknown")
+    deal_type      = deal.get("deal_type", "Fundraise")
+    sector         = deal.get("sector", "Other")
+    round_label    = deal.get("round", "")
+    amount         = deal.get("amount", "Not disclosed")
+    valuation      = deal.get("valuation", "Not disclosed")
+    prior_val      = deal.get("prior_valuation", "Not disclosed")
+    lead_investors = deal.get("lead_investors", [])
+    pricing_notes  = deal.get("pricing_notes", "")
+    summary        = deal.get("summary", "")
+    article_date   = deal.get("article_date", "")
+    url            = deal.get("url", "#")
+    source         = deal.get("source", "")
+    is_down_round  = bool(deal.get("is_down_round", False))
+
+    # Down rounds get a red top-border; fund closes get gold; everything else navy
+    if is_down_round or deal_type == "Down Round":
+        top_border = "#b8271f"
+    elif deal_type == "Fund Close":
+        top_border = "#c9a84c"
+    elif deal_type in ("IPO Filing", "IPO Priced"):
+        top_border = "#0f2545"
+    else:
+        top_border = "#0f2545"
+
+    # Deal-type pill colours
+    pill_styles = {
+        "Fundraise":      "color:#0d4f2c;border-color:#98d4b0;background:#e4f0ea;",
+        "Down Round":     "color:#7a0f0f;border-color:#e8a0a0;background:#fdeaea;font-weight:700;",
+        "Bridge Round":   "color:#7a4400;border-color:#e8c07a;background:#fef5e5;",
+        "Fund Close":     "color:#5a3d00;border-color:#c9a84c;background:#faf4e3;font-weight:700;",
+        "IPO Filing":     "color:#0f2545;border-color:#8aa8d8;background:#e5eaf3;",
+        "IPO Priced":     "color:#0a3020;border-color:#4a9c70;background:#d4f0e3;font-weight:700;",
+        "Acquisition":    "color:#5a1f0a;border-color:#e8a87a;background:#fef0e5;",
+        "Exit":           "color:#5a1f0a;border-color:#e8a87a;background:#fef0e5;",
+        "Secondary Sale": "color:#4a3200;border-color:#d4b870;background:#faf4e3;",
+        "SPAC":           "color:#2b0d50;border-color:#b89fd8;background:#f0e9fb;",
+        "Debt Financing": "color:#3a3a3a;border-color:#aaa;background:#f0ece3;",
+    }
+    pill_style = pill_styles.get(deal_type, "color:#3a3a3a;border-color:#aaa;background:#f0ece3;")
+
+    # Amount display — highlight if real figure
+    amount_lower = amount.lower()
+    amount_is_real = amount_lower not in ("not disclosed", "n/a", "")
+    amount_color = "#b8271f" if amount_is_real else "#4a4e5a"
+
+    # Down-round alert banner (shown above the card content)
+    down_round_banner = ""
+    if is_down_round or deal_type == "Down Round":
+        prior_note = f" (prior: {prior_val})" if prior_val not in ("Not disclosed", "N/A", "") else ""
+        down_round_banner = (
+            f'<div style="background:#fdeaea;border-left:3px solid #b8271f;'
+            f'padding:6px 10px;margin-bottom:10px;font-family:monospace;font-size:10px;'
+            f'color:#7a0f0f;letter-spacing:.04em;">'
+            f'&#9660;&nbsp;<strong>DOWN ROUND</strong> — Valuation reset{prior_note}. '
+            f'Monitor for follow-on distress.</div>'
+        )
+
+    # Lead investors badge list
+    investors_html = ""
+    if lead_investors:
+        badges = "".join(
+            f'<span style="display:inline-block;font-family:monospace;font-size:10px;'
+            f'background:#f0ece3;border:1px solid #d8d3c8;padding:1px 7px;border-radius:2px;'
+            f'margin:2px 3px 2px 0;color:#282830;">{inv}</span>'
+            for inv in lead_investors[:3]
+        )
+        label = "Fund LPs" if deal_type == "Fund Close" else "Lead Investors"
+        investors_html = (
+            f'<div style="margin-top:10px;">'
+            f'<span style="font-family:monospace;font-size:9px;letter-spacing:.12em;'
+            f'text-transform:uppercase;color:#4a4e5a;">{label}&nbsp;&nbsp;</span>'
+            f'{badges}</div>'
+        )
+
+    pricing_html = ""
+    if pricing_notes:
+        pricing_html = (
+            f'<div style="margin-top:8px;padding:6px 10px;background:#faf4e3;'
+            f'border-left:3px solid #c9a84c;font-size:12px;color:#4a3200;line-height:1.5;">'
+            f'<strong>Pricing:</strong> {pricing_notes}</div>'
+        )
+
+    valuation_html = ""
+    if valuation and valuation.lower() not in ("not disclosed", "n/a", ""):
+        val_bg = "#fdeaea" if (is_down_round or deal_type == "Down Round") else "#f5e8e7"
+        valuation_html = (
+            f'<span style="font-family:monospace;font-size:10px;padding:2px 8px;'
+            f'background:{val_bg};border:1px solid #e0b0ab;border-radius:2px;'
+            f'color:#b8271f;margin-left:8px;">Val: {valuation}</span>'
+        )
+
+    round_html = (
+        f'<span style="font-family:monospace;font-size:10px;color:#4a4e5a;">{round_label}</span>&nbsp;&nbsp;'
+        if round_label else ""
+    )
+
+    return (
+        f'<div style="background:#fff;border:1px solid #d8d3c8;border-radius:2px;'
+        f'border-top:3px solid {top_border};padding:18px 20px;margin-bottom:1px;">'
+        f'{down_round_banner}'
+        # Top row: company + deal type pill
+        f'<div style="display:flex;align-items:flex-start;justify-content:space-between;'
+        f'gap:12px;margin-bottom:10px;flex-wrap:wrap;">'
+        f'  <div>'
+        f'    <a href="{url}" target="_blank" style="font-family:Georgia,serif;font-size:16px;'
+        f'font-weight:700;color:#0a0a0c;text-decoration:none;line-height:1.2;">{company}</a>'
+        f'    <div style="margin-top:4px;font-family:monospace;font-size:9px;letter-spacing:.15em;'
+        f'text-transform:uppercase;color:#4a4e5a;">{sector}</div>'
+        f'  </div>'
+        f'  <span style="font-family:monospace;font-size:9px;letter-spacing:.09em;'
+        f'text-transform:uppercase;padding:3px 9px;border:1px solid;border-radius:1px;'
+        f'white-space:nowrap;{pill_style}">{deal_type}</span>'
+        f'</div>'
+        # Amount row
+        f'<div style="display:flex;align-items:baseline;gap:6px;margin-bottom:8px;flex-wrap:wrap;">'
+        f'  <span style="font-family:Georgia,serif;font-size:22px;font-weight:700;'
+        f'line-height:1;color:{amount_color};">{amount}</span>'
+        f'  {round_html}{valuation_html}'
+        f'</div>'
+        # Investors / LPs
+        f'{investors_html}'
+        # Summary
+        f'<p style="margin:10px 0 0;font-size:12.5px;color:#282830;line-height:1.65;">{summary}</p>'
+        # Pricing notes
+        f'{pricing_html}'
+        # Source / date footer
+        f'<div style="margin-top:10px;font-family:monospace;font-size:10px;color:#4a4e5a;">'
+        f'  {article_date}&nbsp;&middot;&nbsp;'
+        f'  <a href="{url}" target="_blank" style="color:#0f2545;text-decoration:none;'
+        f'border-bottom:1px solid rgba(15,37,69,.25);">{source}&nbsp;&#x2197;</a>'
+        f'</div>'
+        f'</div>'
+    )
+
+
+def _sec_filings_html(sec_filings: list[dict[str, Any]]) -> str:
+    """
+    Render SEC EDGAR S-1 / F-1 filings as a compact list subsection.
+    These are the most authoritative IPO intent signals available — free and real-time.
+    """
+    if not sec_filings:
+        return ""
+
+    rows_html = ""
+    for f in sec_filings:
+        form  = f.get("form_type", "S-1")
+        co    = f.get("company_raw") or f.get("title", "Unknown")
+        url   = f.get("url", "#")
+        date  = f.get("published", "")[:10]
+        rows_html += (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:8px 0;border-bottom:1px solid #e8e3d8;gap:12px;flex-wrap:wrap;">'
+            f'  <div>'
+            f'    <span style="font-family:monospace;font-size:8px;letter-spacing:.15em;'
+            f'text-transform:uppercase;background:#0f2545;color:#fff;'
+            f'padding:1px 6px;margin-right:8px;border-radius:1px;">{form}</span>'
+            f'    <a href="{url}" target="_blank" style="font-family:Georgia,serif;font-size:13px;'
+            f'font-weight:700;color:#0a0a0c;text-decoration:none;">{co}</a>'
+            f'  </div>'
+            f'  <span style="font-family:monospace;font-size:10px;color:#4a4e5a;'
+            f'white-space:nowrap;">{date}&nbsp;&middot;&nbsp;'
+            f'<a href="{url}" target="_blank" style="color:#0f2545;text-decoration:none;'
+            f'border-bottom:1px solid rgba(15,37,69,.25);">EDGAR&nbsp;&#x2197;</a></span>'
+            f'</div>'
+        )
+
+    return (
+        '<div style="margin-top:28px;padding:16px 20px;background:#e5eaf3;'
+        'border:1px solid #8aa8d8;border-radius:2px;">'
+        '<div style="font-family:monospace;font-size:8.5px;letter-spacing:.2em;'
+        'text-transform:uppercase;color:#0f2545;margin-bottom:12px;">'
+        '&#128196;&nbsp;SEC EDGAR — Recent IPO Registrations (S-1 / F-1)'
+        '</div>'
+        f'{rows_html}'
+        '<div style="margin-top:10px;font-family:monospace;font-size:10px;color:#4a4e5a;">'
+        'Source: <a href="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&amp;type=S-1" '
+        'target="_blank" style="color:#0f2545;text-decoration:none;'
+        'border-bottom:1px solid rgba(15,37,69,.25);">SEC EDGAR public filings feed</a>'
+        '</div>'
+        '</div>'
+    )
+
+
+def _deals_section_html(
+    deal_rows: list[dict[str, Any]],
+    sec_filings: list[dict[str, Any]] | None = None,
+) -> str:
+    """Render the full IPOs, Exits & Fundraising section."""
+    if not deal_rows and not sec_filings:
+        return ""
+
+    from collections import Counter
+
+    # Sort: down rounds first (highest urgency), then fund closes, then rest
+    def _sort_key(d: dict) -> int:
+        dt = d.get("deal_type", "")
+        if d.get("is_down_round") or dt == "Down Round":
+            return 0
+        if dt == "Bridge Round":
+            return 1
+        if dt in ("IPO Priced", "IPO Filing"):
+            return 2
+        if dt == "Fund Close":
+            return 3
+        return 4
+
+    sorted_rows = sorted(deal_rows, key=_sort_key)
+    cards_html = "".join(_deal_card_html(d, i) for i, d in enumerate(sorted_rows))
+
+    # Stat bar: count deal types + flag if any down rounds
+    type_counts = Counter(d.get("deal_type", "Fundraise") for d in deal_rows)
+    down_count  = sum(1 for d in deal_rows if d.get("is_down_round") or d.get("deal_type") == "Down Round")
+    stat_items  = " &middot; ".join(
+        f'<span style="font-family:monospace;font-size:9px;letter-spacing:.1em;'
+        f'text-transform:uppercase;">{count}&nbsp;{dtype}</span>'
+        for dtype, count in sorted(type_counts.items())
+    )
+    down_alert = ""
+    if down_count:
+        down_alert = (
+            f'&nbsp;&nbsp;<span style="font-family:monospace;font-size:9px;'
+            f'color:#b8271f;font-weight:700;letter-spacing:.05em;">'
+            f'&#9660;&nbsp;{down_count} DOWN ROUND{"S" if down_count > 1 else ""}</span>'
+        )
+
+    sec_html = _sec_filings_html(sec_filings or [])
+
+    return (
+        # Section header
+        '<div style="padding:44px 0 14px;border-bottom:2px solid #0a0a0c;margin-bottom:24px;'
+        'display:flex;align-items:baseline;justify-content:space-between;gap:16px;">'
+        '  <span style="font-family:Georgia,serif;font-size:18px;font-weight:700;">'
+        '    IPOs, Exits &amp; Fundraising</span>'
+        '  <span style="font-family:monospace;font-size:8.5px;color:#4a4e5a;'
+        'letter-spacing:.1em;white-space:nowrap;">New deals today</span>'
+        '</div>'
+        # Type breakdown bar (with down-round alert if any)
+        f'<div style="margin-bottom:20px;padding:10px 14px;background:#f0ece3;'
+        f'border:1px solid #d8d3c8;font-size:11px;color:#4a4e5a;">'
+        f'{stat_items}{down_alert}</div>'
+        # Deal cards (sorted: down rounds first)
+        f'{cards_html}'
+        # SEC EDGAR S-1 filings subsection
+        f'{sec_html}'
+    )
+
+
 def _analyst_takes_html(takes: list[dict]) -> str:
     """Render the analyst takes section."""
     if not takes:
@@ -303,6 +553,8 @@ def build_watchlist_newsletter(
     date_str: str,
     vol_number: int = 1,
     unsubscribe_url: str = "#",
+    deal_rows: list[dict] | None = None,
+    sec_filings: list[dict] | None = None,
 ) -> str:
     """
     Build an HTML newsletter modelled on 'Private Markets Insider' example:
@@ -323,6 +575,31 @@ def build_watchlist_newsletter(
             f"<div class='hs-item'>"
             f"<span class='hs-val'>{stat.get('value','')}</span>"
             f"<span class='hs-key'>{stat.get('label','')}</span>"
+            f"</div>"
+        )
+    if deal_rows:
+        down_count = sum(
+            1 for d in deal_rows
+            if d.get("is_down_round") or d.get("deal_type") == "Down Round"
+        )
+        stats_html += (
+            f"<div class='hs-item'>"
+            f"<span class='hs-val'>{len(deal_rows)}</span>"
+            f"<span class='hs-key'>New Deals &amp; IPOs</span>"
+            f"</div>"
+        )
+        if down_count:
+            stats_html += (
+                f"<div class='hs-item'>"
+                f"<span class='hs-val' style='color:#b8271f;'>&#9660;&nbsp;{down_count}</span>"
+                f"<span class='hs-key'>Down Round{'s' if down_count > 1 else ''}</span>"
+                f"</div>"
+            )
+    if sec_filings:
+        stats_html += (
+            f"<div class='hs-item'>"
+            f"<span class='hs-val'>{len(sec_filings)}</span>"
+            f"<span class='hs-key'>SEC IPO Filings</span>"
             f"</div>"
         )
 
@@ -369,6 +646,12 @@ def build_watchlist_newsletter(
     analyst_section = (
         f"<div class='page'>{_analyst_takes_html(takes)}</div>"
         if takes else ""
+    )
+
+    # Deals & Fundraising section (includes SEC filings subsection)
+    deals_section = (
+        f"<div class='page'>{_deals_section_html(deal_rows or [], sec_filings)}</div>"
+        if (deal_rows or sec_filings) else ""
     )
 
     headline_html = meta.get("headline_html", f"Private Market Intelligence &mdash; {date_str}")
@@ -525,6 +808,9 @@ def build_watchlist_newsletter(
 <!-- ANALYST TAKES -->
 {analyst_section}
 
+<!-- DEALS & FUNDRAISING -->
+{deals_section}
+
 <!-- DISCLAIMER -->
 <div class="page">
   <p style="font-size:11px;color:var(--slate);font-family:'Space Mono',monospace;line-height:1.75;margin-bottom:36px;padding:16px;border:1px solid var(--rule);background:#f7f4ee;">
@@ -553,6 +839,7 @@ def build_plain_text_watchlist_newsletter(
     rows: list[dict],
     date_str: str,
     vol_number: int = 1,
+    deal_rows: list[dict] | None = None,
 ) -> str:
     """Plain-text fallback for the watchlist newsletter."""
     lines = [
@@ -574,6 +861,29 @@ def build_plain_text_watchlist_newsletter(
             f"    Link:      {row.get('url', '')}",
             "",
         ]
+
+    if deal_rows:
+        lines += [
+            "",
+            "IPOS, EXITS & FUNDRAISING",
+            "-" * 60,
+            "",
+        ]
+        for i, deal in enumerate(deal_rows, 1):
+            investors = ", ".join(deal.get("lead_investors", [])) or "Not disclosed"
+            lines += [
+                f"{i:02d}. [ {deal.get('deal_type', 'Fundraise').upper()} ] {deal.get('company', '')}",
+                f"    Round:     {deal.get('round', '')}",
+                f"    Amount:    {deal.get('amount', 'Not disclosed')}",
+                f"    Valuation: {deal.get('valuation', 'Not disclosed')}",
+                f"    Lead Inv:  {investors}",
+                f"    Pricing:   {deal.get('pricing_notes', '') or 'N/A'}",
+                f"    Summary:   {deal.get('summary', '')}",
+                f"    Date:      {deal.get('article_date', '')}  |  {deal.get('source', '')}",
+                f"    Link:      {deal.get('url', '')}",
+                "",
+            ]
+
     lines += ["-" * 60, "Private Markets Insider — Not investment advice — All sources cited above"]
     return "\n".join(lines)
 

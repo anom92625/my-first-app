@@ -319,6 +319,136 @@ def _fetch_newsapi(
 
 
 # ---------------------------------------------------------------------------
+# Deals & fundraising feed fetching
+# ---------------------------------------------------------------------------
+
+# RSS feeds that consistently break IPO filings, fundraising rounds, and M&A exits.
+# Sources selected based on what professional private-market investors actually read:
+# Axios Pro Rata, Fortune Term Sheet, StrictlyVC, Crunchbase News, NVCA.
+DEAL_FEEDS: list[str] = [
+    # TechCrunch dedicated funding / M&A / IPO tags — most reliable free VC feed
+    "https://techcrunch.com/tag/funding/feed/",
+    "https://techcrunch.com/tag/mergers-acquisitions/feed/",
+    "https://techcrunch.com/tag/ipo/feed/",
+    # Crunchbase News — venture-specific feed (more signal than generic)
+    "https://news.crunchbase.com/venture/feed/",
+    "https://news.crunchbase.com/startups/feed/",
+    # Fortune Term Sheet — authoritative daily deal newsletter (Dan Primack successor)
+    "https://fortune.com/newsletter/termsheet/feed/feed",
+    # VentureBeat business / funding coverage
+    "https://venturebeat.com/category/business/feed/",
+    # Reuters M&A and business
+    "https://feeds.reuters.com/reuters/businessNews",
+    # NVCA (National Venture Capital Association) — fund closes, policy, LP news
+    "https://nvca.org/feed/",
+    # StrictlyVC — respected daily VC/PE newsletter (Substack RSS)
+    "https://newsletter.strictlyvc.com/feed",
+    # PE Insights and private equity wire
+    "https://pe-insights.com/feed/",
+]
+
+# Keywords that identify genuine deal articles (used to pre-filter before Claude)
+_DEAL_KEYWORDS = (
+    "raises", "raised", "funding", "funded", "IPO", "files for", "files S-1",
+    "goes public", "acqui", "merger", "acquisition", "Series A", "Series B",
+    "Series C", "Series D", "Series E", "Series F", "growth round", "valuation",
+    "unicorn", "decacorn", "round", "investment", "closes fund", "fund close",
+    "capital", "exit", "secondary", "SPAC", "listing", "priced", "per share",
+    "down round", "bridge", "pre-IPO", "mezzanine", "debt financing",
+)
+
+
+# SEC EDGAR public Atom feeds — free, authoritative, real-time
+# S-1: standard IPO registration; S-11: REIT IPOs; F-1: foreign-private-issuer IPOs
+_SEC_EDGAR_BASE = "https://www.sec.gov/cgi-bin/browse-edgar"
+_SEC_IPO_FORMS = ["S-1", "S-11", "F-1"]
+
+
+def fetch_sec_s1_filings(max_filings: int = 10) -> list[dict[str, Any]]:
+    """
+    Pull the latest IPO registration statements (S-1, S-11, F-1) from SEC EDGAR's
+    public Atom feed.  Returns lightweight dicts suitable for passing to research_deals().
+
+    These are the most authoritative IPO intent signals available for free — every
+    company going public in the US must file here first.
+    """
+    filings: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for form_type in _SEC_IPO_FORMS:
+        url = (
+            f"{_SEC_EDGAR_BASE}?action=getcurrent&type={form_type}"
+            "&dateb=&owner=include&count=20&search_text=&output=atom"
+        )
+        root = _fetch_xml(url)
+        if root is None:
+            continue
+
+        ns = "http://www.w3.org/2005/Atom"
+        for entry in root.findall(f"{{{ns}}}entry"):
+            title    = (entry.findtext(f"{{{ns}}}title") or "").strip()
+            link_el  = entry.find(f"{{{ns}}}link")
+            link     = (link_el.get("href", "") if link_el is not None else "").strip()
+            updated  = (entry.findtext(f"{{{ns}}}updated") or "")[:10]
+            summary  = (entry.findtext(f"{{{ns}}}summary") or "").strip()
+
+            if not title or not link or link in seen:
+                continue
+            seen.add(link)
+
+            # EDGAR title format: "company-name (form_type) - CIK XXXXXXXXX"
+            # Extract company name from title
+            company_raw = title.split("(")[0].strip() if "(" in title else title
+
+            filings.append({
+                "title":     f"{form_type} Filing: {company_raw}",
+                "url":       link,
+                "summary":   summary[:500],
+                "source":    "SEC EDGAR",
+                "published": updated,
+                "form_type": form_type,
+                "company_raw": company_raw,
+            })
+
+        if len(filings) >= max_filings:
+            break
+
+    return filings[:max_filings]
+
+
+def fetch_deals_news(max_articles: int = 20) -> list[dict[str, Any]]:
+    """
+    Fetch recent deal-relevant articles from curated financial / VC feeds.
+    Returns a recency-sorted, deduplicated list of article dicts, pre-filtered
+    to articles whose title or snippet contain deal-related keywords.
+    """
+    seen_urls: set[str] = set()
+    all_articles: list[dict[str, Any]] = []
+
+    for feed_url in DEAL_FEEDS:
+        try:
+            for art in _parse_feed(feed_url, max_articles=8):
+                url = art.get("url", "")
+                if not url or url in seen_urls:
+                    continue
+                text = (art.get("title", "") + " " + art.get("summary", "")).lower()
+                if any(kw.lower() in text for kw in _DEAL_KEYWORDS):
+                    seen_urls.add(url)
+                    all_articles.append(art)
+        except Exception as exc:
+            logger.debug("Deal feed failed (%s): %s", feed_url, exc)
+
+    all_articles.sort(
+        key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for art in all_articles:
+        art.pop("published_dt", None)
+
+    return all_articles[:max_articles]
+
+
+# ---------------------------------------------------------------------------
 # Company watchlist fetching
 # ---------------------------------------------------------------------------
 
