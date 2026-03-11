@@ -201,22 +201,52 @@ def _table_row_html(row: dict, index: int) -> str:
     """Render one <tr> for the deal tracker table."""
     from newsletter.summarizer import UPDATE_TYPE_PILL, SECTOR_BADGE
 
-    company      = row.get("company", "")
-    sector       = row.get("sector", "Other")
-    update_type  = row.get("update_type", "Other")
-    article_date = row.get("article_date", "")
-    valuation    = row.get("valuation", "Not publicly disclosed")
-    update       = row.get("update", "")
-    summary      = row.get("summary", "")
-    url          = row.get("url", "#")
-    source       = row.get("source", "")
+    company       = row.get("company", "")
+    sector        = row.get("sector", "Other")
+    update_type   = row.get("update_type", "Other")
+    article_date  = row.get("article_date", "")
+    valuation     = row.get("valuation", "Not publicly disclosed")
+    last_round    = row.get("last_round", "")
+    key_investors = row.get("key_investors", [])
+    update        = row.get("update", "")
+    summary       = row.get("summary", "")
+    url           = row.get("url", "#")
+    source        = row.get("source", "")
 
     badge_label, badge_cls = SECTOR_BADGE.get(sector, ("Tech", "b-macro"))
     pill_label,  pill_cls  = UPDATE_TYPE_PILL.get(update_type, ("Update", "p-analysis"))
 
-    val_lower = valuation.lower()
-    val_is_real = val_lower not in ("not publicly disclosed", "not disclosed", "n/a", "")
-    val_class = "val val-h" if val_is_real else "val"
+    # Valuation: separate the main figure from the parenthetical context
+    # e.g. "$4.5B (Series C, Jan 2024)" → figure="$4.5B"  ctx="(Series C, Jan 2024)"
+    val_figure = valuation
+    val_ctx    = ""
+    if "(" in valuation:
+        val_figure = valuation[:valuation.index("(")].strip()
+        val_ctx    = valuation[valuation.index("("):].strip()
+
+    val_lower   = val_figure.lower()
+    val_is_real = val_lower not in ("not publicly disclosed", "not disclosed", "n/a", "", "unknown")
+    val_class   = "val val-h" if val_is_real else "val"
+
+    val_html = f"<span class='{val_class}'>{val_figure}</span>"
+    if val_ctx:
+        val_html += f"<br><span style='font-family:monospace;font-size:9px;color:#4a4e5a;'>{val_ctx}</span>"
+    if last_round:
+        val_html += (
+            f"<br><span style='font-family:monospace;font-size:9px;letter-spacing:.08em;"
+            f"color:#4a4e5a;text-transform:uppercase;'>{last_round}</span>"
+        )
+
+    # Show top investor(s) from baseline as small badges under the company name
+    investor_badges = ""
+    if key_investors:
+        investor_badges = "".join(
+            f"<span style='display:inline-block;font-family:monospace;font-size:9px;"
+            f"background:#f0ece3;border:1px solid #d8d3c8;padding:0 5px;margin:1px 2px 1px 0;"
+            f"border-radius:1px;color:#282830;'>{inv}</span>"
+            for inv in key_investors[:2]
+        )
+        investor_badges = f"<div style='margin-top:3px;'>{investor_badges}</div>"
 
     # Combine update headline + summary into one readable cell
     summary_html = ""
@@ -233,10 +263,11 @@ def _table_row_html(row: dict, index: int) -> str:
         f"<td class='co'>"
         f"  <span class='co-name'>{company}<span class='new-dot'></span></span>"
         f"  <span class='badge {badge_cls}'>{badge_label}</span>"
+        f"  {investor_badges}"
         f"</td>"
         f"<td><span class='pill {pill_cls}'>{pill_label}</span></td>"
         f"<td class='date-cell'>{article_date}</td>"
-        f"<td><span class='{val_class}'>{valuation}</span></td>"
+        f"<td>{val_html}</td>"
         f"<td class='sum'>{summary_html}</td>"
         f"<td>"
         f"  <a class='src-link' href='{url}' target='_blank'>{source}</a>"

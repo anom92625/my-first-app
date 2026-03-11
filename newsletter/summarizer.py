@@ -253,14 +253,85 @@ _KNOWN_VALUATIONS: dict[str, str] = {
 }
 
 
+_BASELINE_SYSTEM_PROMPT = """You are a private market intelligence analyst with encyclopedic \
+knowledge of private technology companies — their funding history, investors, valuations, and \
+business models. You always provide specific figures. \
+\
+Rules: \
+- Never say "Not publicly disclosed" for well-known companies. \
+- If exact valuation is uncertain, give your best estimate with the source round and year. \
+- If the company is bootstrapped or pre-funding, say so explicitly with "Bootstrapped" or "Pre-seed". \
+- Write descriptions for a sophisticated investor who has never heard of the company."""
+
+
+def _fetch_company_baseline(
+    company: str,
+    client: Any,
+    known_val: str,
+) -> dict[str, Any]:
+    """
+    Step 1 of the two-step research flow.
+
+    Ask Claude to produce a structured baseline from training knowledge ONLY —
+    no articles involved at this stage.  Because the prompt references no external
+    sources, Claude draws on its internal knowledge and always returns concrete
+    figures rather than defaulting to "Not publicly disclosed".
+
+    Returns a dict with: company, sector, description, valuation, last_round,
+    last_round_amount, key_investors, founded_year.
+    """
+    sectors = ", ".join(f'"{s}"' for s in _VALID_SECTORS)
+
+    if known_val:
+        val_instruction = (
+            f"The company's last known valuation on record is approximately {known_val}. "
+            f"Use this as the baseline and only replace it if your training data contains "
+            f"a more recent reported figure."
+        )
+    else:
+        val_instruction = (
+            "Provide the most recent post-money valuation from your training data. "
+            "Give a specific figure with context, e.g. '$4.5B (Series C, Jan 2024)'. "
+            "If the company had no external funding, write 'Bootstrapped' or 'Pre-seed'. "
+            "Do NOT write 'Not publicly disclosed' — give your best known estimate."
+        )
+
+    prompt = (
+        f"Provide a baseline investor profile for the private company: {company}\n\n"
+        "Use ONLY your training knowledge — no articles or external sources are provided.\n\n"
+        f"Valuation instruction: {val_instruction}\n\n"
+        "Return ONLY valid JSON (no markdown fences):\n"
+        "{{\n"
+        f'  "company": "{company}",\n'
+        f'  "sector": one of [{sectors}],\n'
+        '  "description": "One sentence: what does the company do and for whom.",\n'
+        '  "valuation": "Most recent valuation with context e.g. \'$4.5B (Series C, Jan 2024)\' '
+        'or \'Bootstrapped\' or \'Pre-seed\'",\n'
+        '  "last_round": "Most recent funding round label e.g. \'Series D\', \'Pre-IPO\', '
+        '\'Bootstrapped\', or \'Unknown\'",\n'
+        '  "last_round_amount": "Amount raised in last round e.g. \'$150M\', or \'Not disclosed\'",\n'
+        '  "key_investors": ["Lead investor", "Investor 2", "Investor 3"],\n'
+        '  "founded_year": "e.g. 2016 — or \'unknown\'"\n'
+        "}}\n"
+    )
+
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=500,
+        system=_BASELINE_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(msg.content[0].text)
+
+
 _INVESTOR_SYSTEM_PROMPT = """You are a professional investor and expert investor relations professional \
 helping private market investors stay on top of fast-moving private companies.
 
 Core rules:
-- For company DESCRIPTION and VALUATION: use your own training knowledge — do not try to extract \
-these from article snippets. You know what these companies do and their last reported valuations.
+- The company baseline (description, sector, valuation) is provided to you — do not re-derive it.
 - For the NEWS UPDATE: use only the provided articles — never invent facts.
-- If the articles contain a valuation figure that is more recent than what you know, use the article's figure.
+- If the articles contain a valuation figure more recent than the baseline, update it.
+- Write 'skip: true' only if the articles contain zero investor-relevant information.
 - Never use jargon — write in plain English.
 - Be concise and direct. Write for a sophisticated investor who reads quickly."""
 
@@ -315,35 +386,79 @@ def research_company_update(
     api_key: str,
 ) -> dict[str, Any] | None:
     """
-    Use Claude to research a company and produce a structured investor update.
-    Description, valuation, and sector come from Claude's training knowledge.
-    News update comes from the fetched articles.
-    Returns a dict for the newsletter table row, or None if nothing new.
+    Two-step research flow for a single watchlist company.
+
+    Step 1 — Baseline (Haiku, knowledge-only):
+        Ask Claude what it knows about the company from training data: sector,
+        description, valuation, last round, key investors.  No articles are
+        provided at this stage so Claude cannot fall back on article silence
+        to justify "Not publicly disclosed".
+
+    Step 2 — Update (Sonnet, articles-only):
+        Pass the baseline + fetched articles to Claude.  Claude checks whether
+        any article represents new investor-relevant news and, if so, produces
+        the update fields.  If the articles contain a newer valuation it
+        overrides the baseline figure; otherwise the baseline stands.
+
+    Returns a merged row dict ready for the newsletter, or None if there are
+    no new articles and no baseline was produced.
     """
     new_articles = [a for a in articles if a.get("url", "") not in seen_urls]
     if not new_articles:
         logger.info("No new articles for %s — skipping.", company)
         return None
 
+    # ------------------------------------------------------------------ #
+    # No-API fallback                                                      #
+    # ------------------------------------------------------------------ #
     if not api_key:
         art = new_articles[0]
+        known_val = _KNOWN_VALUATIONS.get(company, "Not disclosed")
         return {
-            "company": company,
-            "sector": "Other",
-            "description": "",
-            "valuation": "Not disclosed",
-            "update_type": "Other",
-            "update": art.get("title", ""),
+            "company":      company,
+            "sector":       "Other",
+            "description":  "",
+            "valuation":    known_val,
+            "last_round":   "",
+            "key_investors": [],
+            "update_type":  "Other",
+            "update":       art.get("title", ""),
             "article_date": (art.get("published") or "")[:10],
-            "summary": art.get("summary", ""),
-            "url": art.get("url", "#"),
-            "source": art.get("source", ""),
+            "summary":      art.get("summary", ""),
+            "url":          art.get("url", "#"),
+            "source":       art.get("source", ""),
         }
 
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
 
+        # ------------------------------------------------------------------ #
+        # STEP 1: Baseline — knowledge-only, no articles                      #
+        # ------------------------------------------------------------------ #
+        known_val = _KNOWN_VALUATIONS.get(company, "")
+        try:
+            baseline = _fetch_company_baseline(company, client, known_val)
+        except Exception as exc:
+            logger.warning("Baseline fetch failed for '%s': %s", company, exc)
+            # Fall back to dict seeded from known valuations
+            baseline = {
+                "company":          company,
+                "sector":           "Other",
+                "description":      "",
+                "valuation":        known_val or "Not disclosed",
+                "last_round":       "Unknown",
+                "last_round_amount":"Not disclosed",
+                "key_investors":    [],
+                "founded_year":     "unknown",
+            }
+
+        if baseline.get("sector") not in SECTOR_BADGE:
+            baseline["sector"] = "Other"
+
+        # ------------------------------------------------------------------ #
+        # STEP 2: Update — articles anchored to baseline                      #
+        # ------------------------------------------------------------------ #
         articles_text = ""
         for i, art in enumerate(new_articles[:5], 1):
             articles_text += (
@@ -355,41 +470,38 @@ def research_company_update(
                 f"  Snippet: {art.get('summary', '')[:500]}\n"
             )
 
-        sectors    = ", ".join(f'"{s}"' for s in _VALID_SECTORS)
-        upd_types  = ", ".join(f'"{t}"' for t in _VALID_UPD_TYPES)
-
-        # Seed with known valuation so Claude doesn't default to "Not disclosed"
-        known_val = _KNOWN_VALUATIONS.get(company, "")
-        val_instruction = (
-            f"Use '{known_val}' as the baseline valuation (update it only if an article "
-            f"contains a more recent figure)."
-            if known_val else
-            "Use the most recently reported valuation from your training knowledge, "
-            "or 'Not publicly disclosed' if genuinely unknown."
+        upd_types = ", ".join(f'"{t}"' for t in _VALID_UPD_TYPES)
+        baseline_summary = (
+            f"Company: {baseline.get('company', company)}\n"
+            f"Sector: {baseline.get('sector', 'Other')}\n"
+            f"Description: {baseline.get('description', '')}\n"
+            f"Last known valuation: {baseline.get('valuation', 'Unknown')}\n"
+            f"Last round: {baseline.get('last_round', 'Unknown')} "
+            f"({baseline.get('last_round_amount', 'Not disclosed')})\n"
+            f"Key investors: {', '.join(baseline.get('key_investors', []))}\n"
         )
 
         prompt = (
-            f"Write an investor briefing row for the private company: {company}\n\n"
-            f"PART 1 — Use YOUR TRAINING KNOWLEDGE for these fields (not the articles):\n"
-            f"• sector:      Industry sector. One of [{sectors}]\n"
-            f"• description: What does {company} do? One plain-English sentence.\n"
-            f"• valuation:   {val_instruction}\n\n"
-            f"PART 2 — From the ARTICLES BELOW, pick the single most investor-relevant update.\n"
-            f"• If an article mentions a newer valuation, use it instead of the baseline above.\n"
-            f"• In the summary field, bold key numbers and names using <strong> tags.\n"
+            f"You have a pre-researched baseline for the private company {company}:\n\n"
+            f"{baseline_summary}\n"
+            "---\n"
+            "Now look at the articles below and identify the single most investor-relevant "
+            "update about this company. Do NOT re-derive the baseline fields — they are "
+            "already correct. ONLY add the update fields.\n\n"
+            "If an article reports a valuation more recent than the baseline, include it "
+            "in a 'valuation_override' field; otherwise omit it.\n\n"
             f"{articles_text}\n"
-            f"Return ONLY valid JSON (no markdown fences):\n"
+            "Return ONLY valid JSON (no markdown fences):\n"
             "{{\n"
-            f'  "company": "{company}",\n'
-            f'  "sector": one of [{sectors}],\n'
-            '  "description": "one plain-English sentence",\n'
-            '  "valuation": "$XX.XB",\n'
             f'  "update_type": one of [{upd_types}],\n'
-            '  "update": "one sentence — the key investor-relevant news headline",\n'
-            '  "article_date": "date of the article (e.g. Mar 10, 2026)",\n'
-            '  "summary": "3-4 sentences with <strong> around key figures. What happened and why it matters.",\n'
+            '  "update": "One sentence — the key investor-relevant news headline.",\n'
+            '  "article_date": "Date of the article e.g. Mar 10, 2026",\n'
+            '  "summary": "3-4 sentences with <strong> around key figures. '
+            'What happened and why it matters to investors.",\n'
             '  "url": "URL of the primary article",\n'
-            '  "source": "publication name"\n'
+            '  "source": "Publication name",\n'
+            '  "valuation_override": "Only if articles contain a newer valuation figure '
+            'e.g. \'$5.2B (Series D, Mar 2026)\' — otherwise omit this field"\n'
             "}}\n\n"
             f"If none of the articles contain useful investor news about {company}, "
             'return exactly: {{"skip": true}}'
@@ -397,38 +509,58 @@ def research_company_update(
 
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=800,
+            max_tokens=700,
             system=_INVESTOR_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
 
-        data = _parse_json_response(msg.content[0].text)
+        update = _parse_json_response(msg.content[0].text)
 
-        if data.get("skip"):
-            logger.info("Claude found no investor-relevant news for %s.", company)
+        if update.get("skip"):
+            logger.info("No investor-relevant news for %s — skipping.", company)
             return None
 
-        if data.get("sector") not in SECTOR_BADGE:
-            data["sector"] = "Other"
-        if data.get("update_type") not in UPDATE_TYPE_PILL:
-            data["update_type"] = "Other"
+        if update.get("update_type") not in UPDATE_TYPE_PILL:
+            update["update_type"] = "Other"
 
-        return data
+        # ------------------------------------------------------------------ #
+        # Merge: baseline fields + update fields                              #
+        # ------------------------------------------------------------------ #
+        final_valuation = update.pop("valuation_override", None) or baseline.get("valuation", "Not disclosed")
+
+        return {
+            # From baseline (always populated)
+            "company":       baseline.get("company", company),
+            "sector":        baseline.get("sector", "Other"),
+            "description":   baseline.get("description", ""),
+            "valuation":     final_valuation,
+            "last_round":    baseline.get("last_round", ""),
+            "key_investors": baseline.get("key_investors", []),
+            # From update (article-derived)
+            "update_type":   update.get("update_type", "Other"),
+            "update":        update.get("update", ""),
+            "article_date":  update.get("article_date", ""),
+            "summary":       update.get("summary", ""),
+            "url":           update.get("url", "#"),
+            "source":        update.get("source", ""),
+        }
 
     except Exception as exc:
         logger.warning("Company research failed for '%s': %s", company, exc)
         art = new_articles[0]
         return {
-            "company": company,
-            "sector": "Other",
-            "description": "",
-            "valuation": "Not publicly disclosed",
-            "update_type": "Other",
-            "update": art.get("title", ""),
-            "article_date": (art.get("published") or "")[:10],
-            "summary": art.get("summary", ""),
-            "url": art.get("url", "#"),
-            "source": art.get("source", ""),
+            "company":       company,
+            "sector":        "Other",
+            "description":   "",
+            "valuation":     _KNOWN_VALUATIONS.get(company, "Not disclosed"),
+            "last_round":    "",
+            "key_investors": [],
+            "update_type":   "Other",
+            "update":        art.get("title", ""),
+            "article_date":  (art.get("published") or "")[:10],
+            "summary":       art.get("summary", ""),
+            "url":           art.get("url", "#"),
+            "source":        art.get("source", ""),
         }
 
 
