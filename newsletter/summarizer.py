@@ -154,6 +154,105 @@ def generate_newsletter_intro(
 # Investor watchlist research (company-focused newsletter)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Known approximate valuations for top private companies.
+# Used to seed the prompt so Claude always has a concrete figure to work with
+# rather than writing "Not publicly disclosed".  Values are last-reported
+# estimates and will be superseded if a more recent figure appears in articles.
+# ---------------------------------------------------------------------------
+_KNOWN_VALUATIONS: dict[str, str] = {
+    # AI / ML
+    "OpenAI":            "$157B",
+    "Anthropic":         "$61B",
+    "xAI":               "$50B",
+    "Databricks":        "$62B",
+    "Scale AI":          "$13.8B",
+    "Cerebras":          "$23B",
+    "Groq":              "$2.8B",
+    "Hugging Face":      "$4.5B",
+    "Perplexity AI":     "$9B",
+    "Character.ai":      "$5B",
+    "Cohere":            "$5B",
+    "Mistral AI":        "$6B",
+    "Together AI":       "$1.25B",
+    "Stability AI":      "$1B",
+    "Weights & Biases":  "$1.25B",
+    "Harvey":            "$3B",
+    "Glean":             "$4.6B",
+    "Writer":            "$1.9B",
+    "Adept AI":          "$1B",
+    # Fintech
+    "Stripe":            "$70B",
+    "Revolut":           "$45B",
+    "Klarna":            "$15B",
+    "Chime":             "$25B",
+    "Brex":              "$12B",
+    "Ramp":              "$32B",
+    "Plaid":             "$13B",
+    "Checkout.com":      "$11B",
+    "Ripple":            "$15B",
+    "Kraken":            "$20B",
+    "Upgrade":           "$6.3B",
+    "Bolt":              "$11B",
+    "Varo Bank":         "$2.5B",
+    # Enterprise SaaS / Infrastructure
+    "Rippling":          "$13.4B",
+    "Deel":              "$12B",
+    "Celonis":           "$13B",
+    "Navan":             "$9.2B",
+    "Carta":             "$8.5B",
+    "Notion":            "$10B",
+    "Retool":            "$3.2B",
+    "Vercel":            "$3.25B",
+    "dbt Labs":          "$4.2B",
+    "Airbyte":           "$1.5B",
+    "Fivetran":          "$5.6B",
+    "Lattice":           "$3B",
+    "Remote":            "$3B",
+    # Cybersecurity
+    "Wiz":               "$12B",
+    "Snyk":              "$7.4B",
+    "Lacework":          "$8.3B",
+    "Abnormal Security": "$5.1B",
+    "Arctic Wolf":       "$4.3B",
+    "Coalition":         "$5B",
+    "At-Bay":            "$1.35B",
+    "Orca Security":     "$1.8B",
+    # Space / Defense
+    "SpaceX":            "$350B",
+    "Anduril Industries":"$28B",
+    "Applied Intuition": "$12B",
+    "Relativity Space":  "$4.2B",
+    "Vast Space":        "$1.8B",
+    # Autonomous / Mobility
+    "Waymo":             "$45B",
+    "Aurora":            "$3B",
+    "Nuro":              "$8.6B",
+    # Consumer / Social
+    "Discord":           "$15B",
+    "Canva":             "$26B",
+    "Epic Games":        "$32B",
+    "ByteDance":         "$300B",
+    "Shein":             "$66B",
+    "Flexport":          "$3.2B",
+    "Faire":             "$7B",
+    # Crypto / Web3
+    "Gemini":            "$7.1B",
+    "Fireblocks":        "$8B",
+    "Chainalysis":       "$8.6B",
+    "MoonPay":           "$3.4B",
+    # Other
+    "CoreWeave":         "$19B",
+    "Lambda Labs":       "$1.5B",
+    "CloudKitchens":     "$15B",
+    "Midjourney":        "not publicly disclosed (bootstrapped/profitable)",
+    "Runway ML":         "$1.5B",
+    "Joby Aviation":     "$4B",
+    "Archer Aviation":   "$1.8B",
+    "Shield AI":         "$2.8B",
+}
+
+
 _INVESTOR_SYSTEM_PROMPT = """You are a professional investor and expert investor relations professional \
 helping private market investors stay on top of fast-moving private companies.
 
@@ -259,23 +358,32 @@ def research_company_update(
         sectors    = ", ".join(f'"{s}"' for s in _VALID_SECTORS)
         upd_types  = ", ".join(f'"{t}"' for t in _VALID_UPD_TYPES)
 
+        # Seed with known valuation so Claude doesn't default to "Not disclosed"
+        known_val = _KNOWN_VALUATIONS.get(company, "")
+        val_instruction = (
+            f"Use '{known_val}' as the baseline valuation (update it only if an article "
+            f"contains a more recent figure)."
+            if known_val else
+            "Use the most recently reported valuation from your training knowledge, "
+            "or 'Not publicly disclosed' if genuinely unknown."
+        )
+
         prompt = (
             f"Write an investor briefing row for the private company: {company}\n\n"
             f"PART 1 — Use YOUR TRAINING KNOWLEDGE for these fields (not the articles):\n"
             f"• sector:      Industry sector. One of [{sectors}]\n"
             f"• description: What does {company} do? One plain-English sentence.\n"
-            f"• valuation:   Most recently reported valuation (e.g. '$65B'). "
-            f"Write 'Not publicly disclosed' if unknown.\n\n"
+            f"• valuation:   {val_instruction}\n\n"
             f"PART 2 — From the ARTICLES BELOW, pick the single most investor-relevant update.\n"
-            f"• If an article mentions a newer valuation, use it instead of your training figure.\n"
+            f"• If an article mentions a newer valuation, use it instead of the baseline above.\n"
             f"• In the summary field, bold key numbers and names using <strong> tags.\n"
             f"{articles_text}\n"
             f"Return ONLY valid JSON (no markdown fences):\n"
             "{{\n"
             f'  "company": "{company}",\n'
             f'  "sector": one of [{sectors}],\n'
-            '  "description": "one plain-English sentence from your knowledge",\n'
-            '  "valuation": "e.g. $65B — from your knowledge, updated if articles have newer figure",\n'
+            '  "description": "one plain-English sentence",\n'
+            '  "valuation": "$XX.XB",\n'
             f'  "update_type": one of [{upd_types}],\n'
             '  "update": "one sentence — the key investor-relevant news headline",\n'
             '  "article_date": "date of the article (e.g. Mar 10, 2026)",\n'
