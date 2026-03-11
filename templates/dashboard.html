@@ -79,14 +79,15 @@
   .nl-badge.emailed { background: #d4edda; color: #155724; }
   .nl-badge.preview-only { background: #e2e3e5; color: #555; }
 
-  .interests-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-  .interest-tag {
-    background: #f0f4ff;
-    color: #4361ee;
+  .watchlist-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .watchlist-tag {
+    background: rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.9);
     font-size: 12px;
     font-weight: 600;
     padding: 4px 12px;
     border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.2);
   }
 
   .empty-state {
@@ -99,10 +100,6 @@
   .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
   .empty-state h3 { font-size: 18px; margin-bottom: 8px; }
   .empty-state p { color: #666; font-size: 14px; margin-bottom: 20px; }
-
-  .generate-spinner { display: none; }
-  .generating .generate-text { display: none; }
-  .generating .generate-spinner { display: inline; }
 </style>
 {% endblock %}
 
@@ -118,32 +115,38 @@
         You haven't generated a brief yet. Click the button to get your first one!
       {% endif %}
     </p>
-    {% if user.interests %}
-      <div class="interests-tags" style="margin-top:12px;">
-        {% for cat in user.interests %}
-          <span class="interest-tag">{{ cat.icon }} {{ cat.name }}</span>
+    {% if user.watchlist %}
+      <div class="watchlist-tags">
+        {% for company in user.watchlist[:8] %}
+          <span class="watchlist-tag">{{ company.name }}</span>
         {% endfor %}
+        {% if user.watchlist | length > 8 %}
+          <span class="watchlist-tag">+{{ user.watchlist | length - 8 }} more</span>
+        {% endif %}
       </div>
     {% endif %}
   </div>
   <div class="dash-hero-actions">
-    {% if user.interests %}
+    {% if user.watchlist %}
       <form method="post" action="{{ url_for('generate_now') }}" id="gen-form">
-        <button type="submit" class="btn btn-primary btn-lg" id="gen-btn" onclick="this.closest('form').submit();this.classList.add('generating');">
-          <span class="generate-text">Generate my brief</span>
-          <span class="generate-spinner">Generating...</span>
+        <button type="submit" class="btn btn-primary btn-lg" id="gen-btn"
+                onclick="this.textContent='Researching...';this.disabled=true;this.closest('form').submit();">
+          Generate my brief
         </button>
       </form>
     {% endif %}
-    <a href="{{ url_for('preferences') }}" class="btn btn-secondary btn-lg" style="color:#333;">Edit interests</a>
+    <a href="{{ url_for('watchlist') }}" class="btn btn-secondary btn-lg" style="color:#333;">
+      Edit watchlist
+    </a>
   </div>
 </div>
 
-<!-- No interests warning -->
-{% if not user.interests %}
+<!-- No watchlist warning -->
+{% if not user.watchlist %}
 <div class="alert alert-warning" style="margin-bottom:24px;">
-  You haven't selected any interests yet.
-  <a href="{{ url_for('preferences') }}" style="color:inherit;font-weight:700;text-decoration:underline;">Pick your topics</a> to generate your first brief.
+  Your watchlist is empty.
+  <a href="{{ url_for('watchlist') }}" style="color:inherit;font-weight:700;text-decoration:underline;">Add companies</a>
+  to generate your first private market brief.
 </div>
 {% endif %}
 
@@ -160,9 +163,9 @@
     <div class="stat-sub">Sent to inbox</div>
   </div>
   <div class="stat-card">
-    <div class="stat-label">Interests</div>
-    <div class="stat-value">{{ user.interests | length }}</div>
-    <div class="stat-sub">Topics followed</div>
+    <div class="stat-label">Watching</div>
+    <div class="stat-value">{{ user.watchlist | length }}</div>
+    <div class="stat-sub">Companies tracked</div>
   </div>
   <div class="stat-card">
     <div class="stat-label">Status</div>
@@ -190,7 +193,7 @@
         <div class="month">{{ nl.sent_at.strftime('%b') }}</div>
       </div>
       <div class="nl-info">
-        <h4>{{ nl.subject or "Daily Brief" }}</h4>
+        <h4>{{ nl.subject or "Private Market Brief" }}</h4>
         <p>{{ nl.sent_at | format_dt }}</p>
       </div>
       <span class="nl-badge {% if nl.was_emailed %}emailed{% else %}preview-only{% endif %}">
@@ -202,15 +205,15 @@
   </ul>
 {% else %}
   <div class="empty-state">
-    <div class="icon">📰</div>
+    <div class="icon">📊</div>
     <h3>No briefs yet</h3>
-    <p>Generate your first personalized newsletter to see it here. It only takes a moment.</p>
-    {% if user.interests %}
+    <p>Generate your first private market intelligence brief to see it here.</p>
+    {% if user.watchlist %}
       <form method="post" action="{{ url_for('generate_now') }}">
         <button type="submit" class="btn btn-primary">Generate my first brief</button>
       </form>
     {% else %}
-      <a href="{{ url_for('preferences') }}" class="btn btn-primary">Choose my interests</a>
+      <a href="{{ url_for('watchlist') }}" class="btn btn-primary">Build my watchlist</a>
     {% endif %}
   </div>
 {% endif %}

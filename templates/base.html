@@ -189,7 +189,7 @@
     <div class="nav-links">
       {% if current_user.is_authenticated %}
         <a href="{{ url_for('dashboard') }}">Dashboard</a>
-        <a href="{{ url_for('preferences') }}">Interests</a>
+        <a href="{{ url_for('watchlist') }}">Watchlist</a>
         <a href="{{ url_for('logout') }}">Log out</a>
       {% else %}
         <a href="{{ url_for('login') }}">Log in</a>

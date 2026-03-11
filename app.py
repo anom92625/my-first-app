@@ -9,6 +9,7 @@ from functools import wraps
 from flask import (
     Flask,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -24,12 +25,21 @@ from flask_login import (
 )
 
 from config import Config
-from models import Category, Newsletter, User, db, seed_categories
-from newsletter.curator import fetch_articles_for_categories
-from newsletter.generator import build_html_newsletter, build_plain_text_newsletter
+from models import Category, Newsletter, User, WatchlistCompany, db, seed_categories
+from newsletter.curator import fetch_articles_for_categories, fetch_articles_for_companies
+from newsletter.generator import (
+    build_html_newsletter,
+    build_plain_text_newsletter,
+    build_watchlist_newsletter,
+    build_plain_text_watchlist_newsletter,
+)
 from newsletter.mailer import send_newsletter
 from newsletter.scheduler import start_scheduler, stop_scheduler
-from newsletter.summarizer import generate_newsletter_intro, summarize_articles
+from newsletter.summarizer import (
+    generate_newsletter_intro,
+    research_company_update,
+    summarize_articles,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -108,8 +118,8 @@ def register():
         db.session.commit()
 
         login_user(user)
-        flash("Welcome! Choose your interests to get started.", "success")
-        return redirect(url_for("preferences"))
+        flash("Welcome! Add companies to your watchlist to get started.", "success")
+        return redirect(url_for("watchlist"))
 
     return render_template("register.html")
 
@@ -153,29 +163,66 @@ def unsubscribe(user_id):
 
 
 # ---------------------------------------------------------------------------
-# Routes — authenticated
+# Routes — watchlist management
+# ---------------------------------------------------------------------------
+
+
+@app.route("/watchlist", methods=["GET", "POST"])
+@login_required
+def watchlist():
+    if request.method == "POST":
+        name = request.form.get("company_name", "").strip()
+        if not name:
+            flash("Please enter a company name.", "warning")
+        elif len(name) > 200:
+            flash("Company name is too long.", "warning")
+        else:
+            # Check for duplicate (case-insensitive)
+            exists = WatchlistCompany.query.filter_by(
+                user_id=current_user.id
+            ).filter(
+                db.func.lower(WatchlistCompany.name) == name.lower()
+            ).first()
+            if exists:
+                flash(f"{name} is already on your watchlist.", "info")
+            else:
+                company = WatchlistCompany(user_id=current_user.id, name=name)
+                db.session.add(company)
+                db.session.commit()
+                flash(f"{name} added to your watchlist.", "success")
+        return redirect(url_for("watchlist"))
+
+    companies = current_user.watchlist
+    return render_template("watchlist.html", companies=companies)
+
+
+@app.route("/watchlist/remove/<int:company_id>", methods=["POST"])
+@login_required
+def watchlist_remove(company_id):
+    company = WatchlistCompany.query.filter_by(
+        id=company_id, user_id=current_user.id
+    ).first_or_404()
+    name = company.name
+    db.session.delete(company)
+    db.session.commit()
+    flash(f"{name} removed from your watchlist.", "info")
+    return redirect(url_for("watchlist"))
+
+
+# ---------------------------------------------------------------------------
+# Routes — preferences (kept for backward compat, redirects to watchlist)
 # ---------------------------------------------------------------------------
 
 
 @app.route("/preferences", methods=["GET", "POST"])
 @login_required
 def preferences():
-    all_categories = Category.query.order_by(Category.name).all()
+    return redirect(url_for("watchlist"))
 
-    if request.method == "POST":
-        selected_ids = request.form.getlist("categories")
-        if not selected_ids:
-            flash("Please select at least one interest category.", "warning")
-            return render_template("preferences.html", categories=all_categories, user_interests=set())
 
-        selected = Category.query.filter(Category.id.in_(selected_ids)).all()
-        current_user.interests = selected
-        db.session.commit()
-        flash("Preferences saved!", "success")
-        return redirect(url_for("dashboard"))
-
-    user_interest_ids = {cat.id for cat in current_user.interests}
-    return render_template("preferences.html", categories=all_categories, user_interests=user_interest_ids)
+# ---------------------------------------------------------------------------
+# Routes — authenticated
+# ---------------------------------------------------------------------------
 
 
 @app.route("/dashboard")
@@ -204,55 +251,67 @@ def view_newsletter(newsletter_id):
 @app.route("/generate", methods=["POST"])
 @login_required
 def generate_now():
-    """Manually trigger newsletter generation for the current user."""
-    slugs = [cat.slug for cat in current_user.interests]
-    if not slugs:
-        flash("You haven't selected any interests yet.", "warning")
-        return redirect(url_for("preferences"))
+    """Manually trigger watchlist newsletter generation for the current user."""
+    companies = current_user.watchlist
+    if not companies:
+        flash("Your watchlist is empty. Add companies to track first.", "warning")
+        return redirect(url_for("watchlist"))
 
     cfg = Config()
     now = datetime.now(tz=timezone.utc)
     date_str = now.strftime("%A, %B %-d, %Y")
 
     try:
-        articles = fetch_articles_for_categories(
-            slugs,
-            articles_per_category=4,
+        # Collect URLs from the last 7 newsletters to avoid repeating content
+        past_newsletters = (
+            Newsletter.query.filter_by(user_id=current_user.id)
+            .order_by(Newsletter.sent_at.desc())
+            .limit(7)
+            .all()
+        )
+        seen_urls: set[str] = set()
+        for nl in past_newsletters:
+            seen_urls.update(nl.get_article_urls())
+
+        # Fetch news for each company
+        company_names = [c.name for c in companies]
+        articles_by_company = fetch_articles_for_companies(
+            company_names,
+            max_per_company=8,
             news_api_key=cfg.NEWS_API_KEY,
         )
 
-        if not articles:
-            flash("Could not fetch articles right now. Please try again later.", "warning")
-            return redirect(url_for("dashboard"))
-
-        top = articles[: cfg.MAX_TOP_STORIES]
-        quick = articles[cfg.MAX_TOP_STORIES: cfg.MAX_TOP_STORIES + cfg.MAX_QUICK_HITS]
-
-        summarize_articles(top, api_key=cfg.ANTHROPIC_API_KEY, max_articles=cfg.MAX_TOP_STORIES)
-
-        cat_names = [cat.name for cat in current_user.interests]
-        intro = generate_newsletter_intro(
-            user_name=current_user.name.split()[0],
-            categories=cat_names,
-            article_count=len(articles),
-            api_key=cfg.ANTHROPIC_API_KEY,
-            date_str=date_str,
-        )
+        # Research each company with Claude
+        rows = []
+        all_used_urls: list[str] = []
+        for company_name in company_names:
+            articles = articles_by_company.get(company_name, [])
+            row = research_company_update(
+                company=company_name,
+                articles=articles,
+                seen_urls=seen_urls,
+                api_key=cfg.ANTHROPIC_API_KEY,
+            )
+            if row:
+                rows.append(row)
+                if row.get("url"):
+                    all_used_urls.append(row["url"])
 
         unsubscribe_url = url_for("unsubscribe", user_id=current_user.id, _external=True)
-        html = build_html_newsletter(
-            current_user.name.split()[0], intro, top, quick, date_str, unsubscribe_url
+        html = build_watchlist_newsletter(
+            current_user.name.split()[0], rows, date_str, unsubscribe_url
         )
-        plain = build_plain_text_newsletter(
-            current_user.name.split()[0], intro, top, quick, date_str
+        plain = build_plain_text_watchlist_newsletter(
+            current_user.name.split()[0], rows, date_str
         )
 
-        subject = f"Your Daily Brief — {date_str}"
+        subject = f"Private Market Brief — {date_str}"
         record = Newsletter(
             user_id=current_user.id,
             subject=subject,
             html_content=html,
         )
+        record.set_article_urls(all_used_urls)
         db.session.add(record)
 
         # Attempt to email it
