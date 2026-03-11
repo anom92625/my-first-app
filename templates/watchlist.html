@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}My Watchlist — My Daily Brief{% endblock %}
+
+{% block extra_head %}
+<style>
+  .wl-header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .wl-header h1 { font-size: 30px; margin-bottom: 10px; }
+  .wl-header p { color: #666; font-size: 16px; max-width: 520px; margin: 0 auto; line-height: 1.6; }
+
+  .add-form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .add-form input[type="text"] {
+    flex: 1;
+    min-width: 220px;
+  }
+
+  .company-list { list-style: none; margin: 0; padding: 0; }
+  .company-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 20px;
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    transition: box-shadow 0.15s;
+  }
+  .company-item:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.07); }
+  .company-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--brand);
+  }
+  .company-added {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .remove-btn {
+    background: transparent;
+    border: 1.5px solid #e8e8e8;
+    color: var(--muted);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .remove-btn:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+    background: #fff5f5;
+  }
+
+  .empty-watchlist {
+    text-align: center;
+    padding: 48px 24px;
+    background: #fff;
+    border: 1px dashed #ddd;
+    border-radius: 12px;
+    color: #888;
+  }
+  .empty-watchlist p { font-size: 15px; margin-bottom: 8px; }
+  .empty-watchlist span { font-size: 13px; color: #bbb; }
+
+  .tip-box {
+    background: #f0f4ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    font-size: 14px;
+    color: #3730a3;
+    line-height: 1.5;
+  }
+
+  .wl-count {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wl-header">
+  <h1>Company Watchlist</h1>
+  <p>
+    Add private companies you want to track. Your daily brief will research
+    the latest news on each company and surface what matters most to investors.
+  </p>
+</div>
+
+<div class="tip-box">
+  <strong>How it works:</strong> Each day, Claude scans the web for the latest
+  news on your watchlisted companies — funding rounds, valuations, key hires,
+  product launches, and more — and compiles it into a clean investor briefing table.
+  Only new information is included; nothing is ever repeated.
+</div>
+
+<!-- ADD COMPANY FORM -->
+<div class="card" style="margin-bottom:28px;">
+  <h3 style="margin-bottom:14px;">Add a company</h3>
+  <form method="post" action="{{ url_for('watchlist') }}" class="add-form">
+    <input
+      type="text"
+      name="company_name"
+      placeholder="e.g. SpaceX, Stripe, OpenAI, Databricks…"
+      maxlength="200"
+      autocomplete="off"
+      autofocus
+    >
+    <button type="submit" class="btn btn-primary">Add to watchlist</button>
+  </form>
+  <p style="font-size:13px;color:#999;margin:0;">
+    Enter the company's commonly known name. You can add up to 20 companies.
+  </p>
+</div>
+
+<!-- COMPANY LIST -->
+{% if companies %}
+  <div class="wl-count">{{ companies | length }} compan{{ 'y' if companies | length == 1 else 'ies' }} tracked</div>
+  <ul class="company-list">
+    {% for company in companies %}
+    <li class="company-item">
+      <div>
+        <div class="company-name">{{ company.name }}</div>
+        <div class="company-added">Added {{ company.created_at.strftime('%b %-d, %Y') }}</div>
+      </div>
+      <form method="post" action="{{ url_for('watchlist_remove', company_id=company.id) }}"
+            onsubmit="return confirm('Remove {{ company.name }} from your watchlist?')">
+        <button type="submit" class="remove-btn">Remove</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <!-- GENERATE BUTTON -->
+  <div style="margin-top:28px;text-align:center;">
+    <form method="post" action="{{ url_for('generate_now') }}" id="gen-form">
+      <button type="submit" class="btn btn-primary btn-lg" id="gen-btn"
+              onclick="this.textContent='Researching...';this.disabled=true;this.closest('form').submit();">
+        Generate my brief now
+      </button>
+    </form>
+    <p style="margin-top:12px;font-size:13px;color:#999;">
+      Research takes 30–90 seconds depending on your watchlist size.
+    </p>
+  </div>
+
+{% else %}
+  <div class="empty-watchlist">
+    <p>Your watchlist is empty.</p>
+    <span>Add your first company above to get started.</span>
+  </div>
+{% endif %}
+
+{% if companies %}
+<div style="margin-top:24px;text-align:center;">
+  <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Back to dashboard</a>
+</div>
+{% endif %}
+{% endblock %}

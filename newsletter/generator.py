@@ -197,6 +197,163 @@ def build_html_newsletter(
 </html>"""
 
 
+def build_watchlist_newsletter(
+    user_name: str,
+    rows: list[dict],
+    date_str: str,
+    unsubscribe_url: str = "#",
+) -> str:
+    """
+    Build an HTML newsletter for private company watchlist updates.
+    Each row contains: company, description, valuation, update,
+    article_date, summary, url, source.
+    """
+
+    if not rows:
+        table_html = f"""
+<div style="background:#fff;border-radius:8px;padding:32px;text-align:center;border:1px solid #e8e8e8;">
+  <p style="color:{MUTED_COLOR};font-size:15px;margin:0;">
+    No new investor-relevant updates found for your watchlist today. Check back tomorrow.
+  </p>
+</div>"""
+    else:
+        header_cells = [
+            "Company", "What They Do", "Latest Valuation",
+            "Key Update", "Article Date", "Summary", "Source",
+        ]
+        th_style = (
+            f"padding:11px 14px;text-align:left;font-size:11px;font-weight:700;"
+            f"text-transform:uppercase;letter-spacing:0.8px;color:#fff;"
+            f"background:{BRAND_COLOR};white-space:nowrap;"
+        )
+        header_row = "".join(f'<th style="{th_style}">{h}</th>' for h in header_cells)
+
+        row_html_parts = []
+        for i, row in enumerate(rows):
+            bg = "#ffffff" if i % 2 == 0 else "#f8f9fc"
+            td = f"padding:12px 14px;vertical-align:top;font-size:13px;border-bottom:1px solid #eee;background:{bg};"
+            url = row.get("url", "#")
+            source = row.get("source", "")
+            company = row.get("company", "")
+            valuation = row.get("valuation", "N/A")
+            val_color = ACCENT_COLOR if valuation != "N/A" else MUTED_COLOR
+
+            row_html_parts.append(
+                f'<tr>'
+                f'<td style="{td}font-weight:700;color:{BRAND_COLOR};white-space:nowrap;">{company}</td>'
+                f'<td style="{td}color:#444;">{row.get("description", "")}</td>'
+                f'<td style="{td}font-weight:600;color:{val_color};white-space:nowrap;">{valuation}</td>'
+                f'<td style="{td}color:#333;">{row.get("update", "")}</td>'
+                f'<td style="{td}color:{MUTED_COLOR};white-space:nowrap;">{row.get("article_date", "")}</td>'
+                f'<td style="{td}color:#444;line-height:1.5;">{row.get("summary", "")}</td>'
+                f'<td style="{td}"><a href="{url}" style="color:{ACCENT_COLOR};text-decoration:none;font-weight:600;" '
+                f'target="_blank">{source}</a>'
+                f'<br><a href="{url}" style="color:{MUTED_COLOR};font-size:11px;" target="_blank">Read &rarr;</a></td>'
+                f'</tr>'
+            )
+
+        rows_html = "\n".join(row_html_parts)
+        table_html = f"""
+<div style="overflow-x:auto;border-radius:8px;border:1px solid #e8e8e8;">
+  <table style="width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <thead><tr>{header_row}</tr></thead>
+    <tbody>{rows_html}</tbody>
+  </table>
+</div>"""
+
+    company_list = ", ".join(r.get("company", "") for r in rows) if rows else "your watchlist"
+    intro = (
+        f"Here is your private market intelligence update for {date_str}. "
+        f"Covering {len(rows)} update{'s' if len(rows) != 1 else ''} across your watchlist."
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Private Market Brief — {date_str}</title>
+</head>
+<body style="margin:0;padding:0;background:{BG_COLOR};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<div style="max-width:900px;margin:0 auto;padding:24px 16px;">
+
+  <!-- HEADER -->
+  <div style="background:{BRAND_COLOR};border-radius:10px 10px 0 0;padding:28px 32px;text-align:center;margin-bottom:0;">
+    <div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:2px;margin-bottom:6px;">Private Market Intelligence</div>
+    <h1 style="margin:0;font-size:26px;font-weight:800;color:#fff;">{date_str}</h1>
+    <div style="width:40px;height:3px;background:{ACCENT_COLOR};margin:12px auto 0;border-radius:2px;"></div>
+  </div>
+
+  <!-- INTRO BANNER -->
+  <div style="background:#16213e;border-radius:0 0 10px 10px;padding:18px 32px 22px;margin-bottom:24px;">
+    <p style="margin:0;font-size:15px;line-height:1.7;color:rgba(255,255,255,0.85);">
+      Good morning, {user_name}. {intro}
+    </p>
+  </div>
+
+  <!-- COMPANY TABLE -->
+  <div style="margin-bottom:24px;">
+    <p style="margin:0 0 14px;font-size:12px;font-weight:700;color:{MUTED_COLOR};text-transform:uppercase;letter-spacing:1px;">Watchlist Updates</p>
+    {table_html}
+  </div>
+
+  <!-- DISCLAIMER -->
+  <div style="background:#fff8f0;border:1px solid #ffe0b2;border-radius:8px;padding:14px 20px;margin-bottom:20px;">
+    <p style="margin:0;font-size:12px;color:#7c4e00;line-height:1.6;">
+      <strong>Disclaimer:</strong> All information is sourced from publicly available news articles.
+      This newsletter is for informational purposes only and does not constitute investment advice.
+      Always verify information independently before making investment decisions.
+    </p>
+  </div>
+
+  <!-- FOOTER -->
+  <div style="text-align:center;padding:20px 0 12px;">
+    <p style="margin:0 0 6px;font-size:12px;color:{MUTED_COLOR};">
+      You're receiving this because you subscribed to My Daily Brief.
+    </p>
+    <p style="margin:0;font-size:12px;">
+      <a href="{unsubscribe_url}" style="color:{MUTED_COLOR};text-decoration:underline;">Unsubscribe</a>
+    </p>
+    <p style="margin:12px 0 0;font-size:11px;color:#bbb;">My Daily Brief &copy; {date_str[-4:]}</p>
+  </div>
+
+</div>
+</body>
+</html>"""
+
+
+def build_plain_text_watchlist_newsletter(
+    user_name: str,
+    rows: list[dict],
+    date_str: str,
+) -> str:
+    """Plain-text fallback for the watchlist newsletter."""
+    lines = [
+        f"PRIVATE MARKET BRIEF — {date_str}",
+        "=" * 60,
+        "",
+        f"Good morning, {user_name}.",
+        f"{len(rows)} update(s) across your watchlist.",
+        "",
+        f"{'Company':<20} {'Valuation':<12} {'Update':<40} {'Source':<20}",
+        "-" * 60,
+    ]
+    for row in rows:
+        lines += [
+            "",
+            f"COMPANY:    {row.get('company', '')}",
+            f"WHAT:       {row.get('description', '')}",
+            f"VALUATION:  {row.get('valuation', 'N/A')}",
+            f"UPDATE:     {row.get('update', '')}",
+            f"DATE:       {row.get('article_date', '')}",
+            f"SUMMARY:    {row.get('summary', '')}",
+            f"SOURCE:     {row.get('source', '')}",
+            f"LINK:       {row.get('url', '')}",
+        ]
+    lines += ["", "=" * 60, "My Daily Brief — Private Market Intelligence"]
+    return "\n".join(lines)
+
+
 def build_plain_text_newsletter(
     user_name: str,
     intro_text: str,

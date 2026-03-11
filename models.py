@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -29,6 +30,8 @@ class User(UserMixin, db.Model):
 
     interests = db.relationship("Category", secondary=user_interests, back_populates="subscribers")
     newsletters = db.relationship("Newsletter", back_populates="user", cascade="all, delete-orphan")
+    watchlist = db.relationship("WatchlistCompany", back_populates="user", cascade="all, delete-orphan",
+                                order_by="WatchlistCompany.name")
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -38,6 +41,20 @@ class User(UserMixin, db.Model):
 
     def __repr__(self):
         return f"<User {self.email}>"
+
+
+class WatchlistCompany(db.Model):
+    __tablename__ = "watchlist_companies"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    name = db.Column(db.String(256), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User", back_populates="watchlist")
+
+    def __repr__(self):
+        return f"<WatchlistCompany {self.name}>"
 
 
 class Category(db.Model):
@@ -64,8 +81,19 @@ class Newsletter(db.Model):
     html_content = db.Column(db.Text)
     sent_at = db.Column(db.DateTime, default=datetime.utcnow)
     was_emailed = db.Column(db.Boolean, default=False)
+    # JSON list of article URLs included in this newsletter (for deduplication)
+    article_urls = db.Column(db.Text, default="[]")
 
     user = db.relationship("User", back_populates="newsletters")
+
+    def get_article_urls(self) -> list[str]:
+        try:
+            return json.loads(self.article_urls or "[]")
+        except Exception:
+            return []
+
+    def set_article_urls(self, urls: list[str]):
+        self.article_urls = json.dumps(urls)
 
     def __repr__(self):
         return f"<Newsletter user={self.user_id} sent={self.sent_at}>"

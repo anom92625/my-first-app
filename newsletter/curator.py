@@ -9,6 +9,7 @@ from authoritative, varied sources and surface the most-shared/engaged stories.
 """
 import logging
 import re
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -315,3 +316,93 @@ def _fetch_newsapi(
             logger.warning("NewsAPI error for %s: %s", cat, exc)
 
     return articles
+
+
+# ---------------------------------------------------------------------------
+# Company watchlist fetching
+# ---------------------------------------------------------------------------
+
+GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+
+# Investor-relevant keywords to bias search results toward business news
+_INVESTOR_KEYWORDS = "funding OR valuation OR IPO OR acquisition OR revenue OR growth OR investment OR raises"
+
+
+def fetch_articles_for_companies(
+    company_names: list[str],
+    max_per_company: int = 8,
+    news_api_key: str = "",
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Fetch recent news articles for each company in the watchlist.
+    Returns a dict mapping company name → list of article dicts.
+    Uses Google News RSS (free, no key required) plus optional NewsAPI.
+    """
+    results: dict[str, list[dict[str, Any]]] = {}
+
+    for company in company_names:
+        articles: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        # Primary: investor-focused Google News search
+        investor_query = urllib.parse.quote(f'"{company}" ({_INVESTOR_KEYWORDS})')
+        investor_url = GOOGLE_NEWS_RSS.format(query=investor_query)
+        for art in _parse_feed(investor_url, max_articles=max_per_company):
+            url = art.get("url", "")
+            if url and url not in seen:
+                seen.add(url)
+                art["company"] = company
+                articles.append(art)
+
+        # Fallback: broader company name search if we didn't get enough
+        if len(articles) < 3:
+            general_query = urllib.parse.quote(f'"{company}" private company')
+            general_url = GOOGLE_NEWS_RSS.format(query=general_query)
+            for art in _parse_feed(general_url, max_articles=max_per_company):
+                url = art.get("url", "")
+                if url and url not in seen:
+                    seen.add(url)
+                    art["company"] = company
+                    articles.append(art)
+
+        # Optional: NewsAPI everything endpoint for company-specific search
+        if news_api_key and len(articles) < max_per_company:
+            try:
+                resp = requests.get(
+                    "https://newsapi.org/v2/everything",
+                    params={
+                        "q": f'"{company}"',
+                        "language": "en",
+                        "sortBy": "publishedAt",
+                        "pageSize": 5,
+                        "apiKey": news_api_key,
+                    },
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    for item in resp.json().get("articles", []):
+                        url = item.get("url", "")
+                        if url and url not in seen:
+                            seen.add(url)
+                            articles.append({
+                                "title": item.get("title", ""),
+                                "url": url,
+                                "summary": item.get("description", "") or "",
+                                "source": item.get("source", {}).get("name", "NewsAPI"),
+                                "published": item.get("publishedAt", ""),
+                                "company": company,
+                            })
+            except Exception as exc:
+                logger.warning("NewsAPI company search failed for %s: %s", company, exc)
+
+        # Sort by recency, clean up internal datetime field
+        articles.sort(
+            key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        for art in articles:
+            art.pop("published_dt", None)
+
+        results[company] = articles[:max_per_company]
+
+    return results
