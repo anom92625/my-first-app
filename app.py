@@ -61,7 +61,7 @@ from flask_login import (
 
 from config import Config
 from models import Category, Newsletter, User, WatchlistCompany, db, seed_categories
-from newsletter.curator import fetch_articles_for_categories, fetch_articles_for_companies
+from newsletter.curator import fetch_articles_for_categories, fetch_articles_for_companies, fetch_deals_news
 from newsletter.generator import (
     build_html_newsletter,
     build_plain_text_newsletter,
@@ -75,6 +75,7 @@ from newsletter.summarizer import (
     generate_newsletter_intro,
     generate_newsletter_narrative,
     research_company_update,
+    research_deals,
     summarize_articles,
 )
 
@@ -358,6 +359,14 @@ def generate_now():
             api_key=cfg.ANTHROPIC_API_KEY,
         )
 
+        # Fetch and structure market-wide deals (IPOs, exits, fundraising)
+        deal_articles = fetch_deals_news(max_articles=20)
+        deal_rows = research_deals(
+            articles=deal_articles,
+            seen_urls=seen_urls,
+            api_key=cfg.ANTHROPIC_API_KEY,
+        )
+
         unsubscribe_url = url_for("unsubscribe", user_id=current_user.id, _external=True)
         html = build_watchlist_newsletter(
             user_name=current_user.name.split()[0],
@@ -366,12 +375,14 @@ def generate_now():
             date_str=date_str,
             vol_number=vol_number,
             unsubscribe_url=unsubscribe_url,
+            deal_rows=deal_rows,
         )
         plain = build_plain_text_watchlist_newsletter(
             user_name=current_user.name.split()[0],
             rows=rows,
             date_str=date_str,
             vol_number=vol_number,
+            deal_rows=deal_rows,
         )
 
         subject = f"Private Markets Insider — Vol. {vol_number:02d} — {date_str}"

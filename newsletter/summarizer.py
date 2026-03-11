@@ -570,3 +570,148 @@ def _default_narrative(
         "only_new_text": prev_str,
         "analyst_takes": [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Deals & Fundraising section
+# ---------------------------------------------------------------------------
+
+DEAL_TYPES = [
+    "Fundraise",
+    "IPO Filing",
+    "IPO Priced",
+    "Acquisition",
+    "Exit",
+    "Secondary Sale",
+    "SPAC",
+    "Debt Financing",
+]
+
+_DEALS_SYSTEM_PROMPT = """You are a senior analyst at a top-tier private equity firm. \
+Your job is to extract clean, structured data from raw article titles and snippets about \
+IPOs, fundraising rounds, acquisitions, and other capital-markets events. \
+Be precise with numbers. Never invent investors or amounts not stated in the source text. \
+Write 'Not disclosed' for any field not mentioned in the articles."""
+
+
+def research_deals(
+    articles: list[dict[str, Any]],
+    seen_urls: set[str],
+    api_key: str,
+) -> list[dict[str, Any]]:
+    """
+    Given a list of deal-relevant articles, use Claude to extract up to 8
+    structured deal records covering: deal type, company, round, amount raised,
+    valuation, lead investors, and pricing details (for IPOs).
+
+    Returns a list of deal dicts (may be empty).  Falls back to simple
+    title-based stub records if the API key is absent or the call fails.
+    """
+    new_articles = [a for a in articles if a.get("url", "") not in seen_urls]
+    if not new_articles:
+        return []
+
+    deal_types_str = ", ".join(f'"{t}"' for t in DEAL_TYPES)
+    sectors_str    = ", ".join(f'"{s}"' for s in _VALID_SECTORS)
+
+    # Stub fallback (no API key)
+    if not api_key:
+        stubs = []
+        for art in new_articles[:6]:
+            stubs.append({
+                "company":        "",
+                "deal_type":      "Fundraise",
+                "sector":         "Other",
+                "round":          "",
+                "amount":         "Not disclosed",
+                "valuation":      "Not disclosed",
+                "lead_investors": [],
+                "pricing_notes":  "",
+                "summary":        art.get("title", ""),
+                "article_date":   (art.get("published") or "")[:10],
+                "url":            art.get("url", "#"),
+                "source":         art.get("source", ""),
+            })
+        return stubs
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+
+        articles_text = ""
+        for i, art in enumerate(new_articles[:15], 1):
+            articles_text += (
+                f"\nArticle {i}:\n"
+                f"  Title:   {art.get('title', '')}\n"
+                f"  Date:    {art.get('published', 'unknown')}\n"
+                f"  Source:  {art.get('source', '')}\n"
+                f"  URL:     {art.get('url', '')}\n"
+                f"  Snippet: {art.get('summary', '')[:400]}\n"
+            )
+
+        prompt = (
+            f"Below are {len(new_articles[:15])} news articles. "
+            "Identify every genuine capital-markets event (IPO filing, fundraising round, "
+            "acquisition, exit, secondary sale, debt financing) described in them.\n\n"
+            f"{articles_text}\n"
+            "For each real deal you find, extract the following fields. "
+            "ONLY include articles that describe an actual deal — skip general opinion pieces, "
+            "market commentary, or articles where no specific company/amount is mentioned.\n\n"
+            "Return ONLY valid JSON — a top-level array (no markdown fences):\n"
+            "[\n"
+            "  {{\n"
+            f'    "company": "Company name",\n'
+            f'    "deal_type": one of [{deal_types_str}],\n'
+            f'    "sector": one of [{sectors_str}],\n'
+            '    "round": "Round label e.g. Series C, Pre-IPO, Growth Round, or empty string",\n'
+            '    "amount": "Amount raised e.g. $500M, or \\"Not disclosed\\"",\n'
+            '    "valuation": "Post-money valuation if stated e.g. $4.5B, or \\"Not disclosed\\"",\n'
+            '    "lead_investors": ["Investor 1", "Investor 2"],\n'
+            '    "pricing_notes": "IPO price range or other pricing detail, or empty string",\n'
+            '    "summary": "2-3 sentences: what happened, why it matters, key numbers. '
+            'Bold figures with <strong> tags.",\n'
+            '    "article_date": "e.g. Mar 10, 2026",\n'
+            '    "url": "article URL",\n'
+            '    "source": "publication name"\n'
+            "  }}\n"
+            "]\n\n"
+            "Return an empty array [] if no genuine deal articles are found."
+        )
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
+            system=_DEALS_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = msg.content[0].text.strip()
+        # Strip markdown fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.rstrip("`").strip()
+
+        deals = json.loads(raw)
+        if not isinstance(deals, list):
+            return []
+
+        # Normalise fields and cap at 8 deals
+        cleaned = []
+        for d in deals[:8]:
+            if not isinstance(d, dict) or not d.get("company"):
+                continue
+            if d.get("deal_type") not in DEAL_TYPES:
+                d["deal_type"] = "Fundraise"
+            if d.get("sector") not in SECTOR_BADGE:
+                d["sector"] = "Other"
+            if not isinstance(d.get("lead_investors"), list):
+                d["lead_investors"] = []
+            cleaned.append(d)
+
+        return cleaned
+
+    except Exception as exc:
+        logger.warning("research_deals failed: %s", exc)
+        return []

@@ -319,6 +319,71 @@ def _fetch_newsapi(
 
 
 # ---------------------------------------------------------------------------
+# Deals & fundraising feed fetching
+# ---------------------------------------------------------------------------
+
+# RSS feeds that consistently break IPO filings, fundraising rounds, and M&A exits
+DEAL_FEEDS: list[str] = [
+    # TechCrunch dedicated funding / M&A tags
+    "https://techcrunch.com/tag/funding/feed/",
+    "https://techcrunch.com/tag/mergers-acquisitions/feed/",
+    "https://techcrunch.com/tag/ipo/feed/",
+    # Crunchbase News
+    "https://news.crunchbase.com/feed/",
+    # VentureBeat funding
+    "https://venturebeat.com/category/business/feed/",
+    # Reuters M&A + business wire
+    "https://feeds.reuters.com/reuters/businessNews",
+    # PR Newswire funding / IPO press releases
+    "https://www.prnewswire.com/rss/news-releases-list.rss",
+    # Axios (free RSS limited, but worth trying)
+    "https://api.axios.com/feed/",
+    # Fortune
+    "https://fortune.com/feed/",
+]
+
+# Keywords that identify genuine deal articles (used to score/filter)
+_DEAL_KEYWORDS = (
+    "raises", "funding", "IPO", "files for", "goes public", "acqui", "merger",
+    "acquisition", "Series A", "Series B", "Series C", "Series D", "Series E",
+    "valuation", "unicorn", "round", "investment", "capital", "exit",
+    "secondary", "SPAC", "listing", "priced", "per share",
+)
+
+
+def fetch_deals_news(max_articles: int = 20) -> list[dict[str, Any]]:
+    """
+    Fetch recent deal-relevant articles from curated financial / VC feeds.
+    Returns a recency-sorted, deduplicated list of article dicts, pre-filtered
+    to articles whose title or snippet contain deal-related keywords.
+    """
+    seen_urls: set[str] = set()
+    all_articles: list[dict[str, Any]] = []
+
+    for feed_url in DEAL_FEEDS:
+        try:
+            for art in _parse_feed(feed_url, max_articles=8):
+                url = art.get("url", "")
+                if not url or url in seen_urls:
+                    continue
+                text = (art.get("title", "") + " " + art.get("summary", "")).lower()
+                if any(kw.lower() in text for kw in _DEAL_KEYWORDS):
+                    seen_urls.add(url)
+                    all_articles.append(art)
+        except Exception as exc:
+            logger.debug("Deal feed failed (%s): %s", feed_url, exc)
+
+    all_articles.sort(
+        key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for art in all_articles:
+        art.pop("published_dt", None)
+
+    return all_articles[:max_articles]
+
+
+# ---------------------------------------------------------------------------
 # Company watchlist fetching
 # ---------------------------------------------------------------------------
 
