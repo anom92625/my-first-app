@@ -75,6 +75,7 @@ from newsletter.generator import (
 )
 import json as _json
 from newsletter.mailer import send_newsletter
+from newsletter.pdf_generator import generate_pdf
 from newsletter.scheduler import start_scheduler, stop_scheduler
 from newsletter.summarizer import (
     generate_newsletter_intro,
@@ -295,6 +296,27 @@ def view_newsletter(newsletter_id):
     return nl.html_content
 
 
+@app.route("/newsletter/<int:newsletter_id>/pdf")
+@login_required
+def download_newsletter_pdf(newsletter_id):
+    """Regenerate and download a newsletter as a PDF file."""
+    from flask import Response
+    nl = Newsletter.query.filter_by(id=newsletter_id, user_id=current_user.id).first_or_404()
+    try:
+        pdf_bytes = generate_pdf(nl.html_content)
+    except Exception as exc:
+        logger.error("PDF generation failed for newsletter %s: %s", newsletter_id, exc)
+        flash("PDF generation failed. WeasyPrint may not be installed.", "danger")
+        return redirect(url_for("view_newsletter", newsletter_id=newsletter_id))
+
+    filename = f"private-markets-insider-{newsletter_id}.pdf"
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.route("/generate", methods=["POST"])
 @login_required
 def generate_now():
@@ -404,7 +426,15 @@ def generate_now():
         record.companies_json = _json.dumps([r["company"] for r in rows])
         db.session.add(record)
 
-        # Attempt to email it
+        # Generate PDF (soft failure — send email without it if rendering fails)
+        pdf_bytes: bytes | None = None
+        pdf_filename = f"private-markets-insider-vol{vol_number:02d}.pdf"
+        try:
+            pdf_bytes = generate_pdf(html)
+        except Exception as pdf_exc:
+            logger.warning("PDF generation failed: %s — sending without PDF", pdf_exc)
+
+        # Attempt to email it (with PDF attachment if available)
         ok = send_newsletter(
             to_email=current_user.email,
             to_name=current_user.name,
@@ -417,13 +447,16 @@ def generate_now():
             smtp_password=cfg.SMTP_PASSWORD,
             from_email=cfg.EMAIL_FROM,
             from_name=cfg.EMAIL_FROM_NAME,
+            pdf_bytes=pdf_bytes,
+            pdf_filename=pdf_filename,
         )
         record.was_emailed = ok
         current_user.last_newsletter_at = now
         db.session.commit()
 
         if ok:
-            flash("Newsletter generated and sent to your email!", "success")
+            pdf_note = " with PDF attached" if pdf_bytes else ""
+            flash(f"Newsletter generated and sent to your email{pdf_note}!", "success")
         else:
             flash("Newsletter generated (email delivery requires SMTP configuration).", "info")
 
