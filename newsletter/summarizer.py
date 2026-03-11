@@ -577,21 +577,26 @@ def _default_narrative(
 # ---------------------------------------------------------------------------
 
 DEAL_TYPES = [
-    "Fundraise",
-    "IPO Filing",
-    "IPO Priced",
-    "Acquisition",
-    "Exit",
-    "Secondary Sale",
-    "SPAC",
-    "Debt Financing",
+    "Fundraise",       # Standard up-round equity raise
+    "Down Round",      # Raise at a lower valuation than prior round — distress signal
+    "Bridge Round",    # Short-term capital to extend runway — often precedes restructuring
+    "Fund Close",      # VC/PE fund reaching a close — LP intelligence
+    "IPO Filing",      # S-1 / F-1 registration statement filed
+    "IPO Priced",      # IPO pricing set; shares to begin trading
+    "Acquisition",     # Company acquired (disclosed buyer)
+    "Exit",            # Founder/investor exit (secondary, buyout, or acqui-hire)
+    "Secondary Sale",  # LP stake or employee share sale on secondary market
+    "SPAC",            # SPAC merger / blank-cheque vehicle
+    "Debt Financing",  # Venture debt, credit facility, or convertible note
 ]
 
 _DEALS_SYSTEM_PROMPT = """You are a senior analyst at a top-tier private equity firm. \
 Your job is to extract clean, structured data from raw article titles and snippets about \
-IPOs, fundraising rounds, acquisitions, and other capital-markets events. \
-Be precise with numbers. Never invent investors or amounts not stated in the source text. \
-Write 'Not disclosed' for any field not mentioned in the articles."""
+IPOs, fundraising rounds, acquisitions, fund closes, down rounds, and other capital-markets events. \
+Be precise with numbers. Never invent investors, amounts, or valuations not stated in the source text. \
+Write 'Not disclosed' for any field not mentioned. \
+Flag down rounds and bridge rounds explicitly — they are the most important distress signals \
+professional investors track. A down round is any raise at a valuation below the prior round."""
 
 
 def research_deals(
@@ -619,18 +624,20 @@ def research_deals(
         stubs = []
         for art in new_articles[:6]:
             stubs.append({
-                "company":        "",
-                "deal_type":      "Fundraise",
-                "sector":         "Other",
-                "round":          "",
-                "amount":         "Not disclosed",
-                "valuation":      "Not disclosed",
-                "lead_investors": [],
-                "pricing_notes":  "",
-                "summary":        art.get("title", ""),
-                "article_date":   (art.get("published") or "")[:10],
-                "url":            art.get("url", "#"),
-                "source":         art.get("source", ""),
+                "company":         "",
+                "deal_type":       "Fundraise",
+                "sector":          "Other",
+                "round":           "",
+                "amount":          "Not disclosed",
+                "valuation":       "Not disclosed",
+                "prior_valuation": "Not disclosed",
+                "lead_investors":  [],
+                "pricing_notes":   "",
+                "is_down_round":   False,
+                "summary":         art.get("title", ""),
+                "article_date":    (art.get("published") or "")[:10],
+                "url":             art.get("url", "#"),
+                "source":          art.get("source", ""),
             })
         return stubs
 
@@ -651,36 +658,47 @@ def research_deals(
 
         prompt = (
             f"Below are {len(new_articles[:15])} news articles. "
-            "Identify every genuine capital-markets event (IPO filing, fundraising round, "
-            "acquisition, exit, secondary sale, debt financing) described in them.\n\n"
+            "Identify every genuine capital-markets event described: fundraising rounds, "
+            "IPO filings/pricings, acquisitions, exits, fund closes, down rounds, "
+            "bridge rounds, secondary sales, debt financings, and SPACs.\n\n"
             f"{articles_text}\n"
-            "For each real deal you find, extract the following fields. "
-            "ONLY include articles that describe an actual deal — skip general opinion pieces, "
-            "market commentary, or articles where no specific company/amount is mentioned.\n\n"
+            "RULES:\n"
+            "- ONLY include articles that describe a specific, named deal or event.\n"
+            "- Skip general opinion, market commentary, and listicles.\n"
+            "- Set deal_type='Down Round' if the new valuation is below the prior round, "
+            "OR if the article explicitly calls it a down round or flat round.\n"
+            "- Set deal_type='Bridge Round' if the article mentions bridge financing, "
+            "extended runway, or convertible note to next round.\n"
+            "- Set deal_type='Fund Close' for VC/PE fund close announcements "
+            "(company = GP firm name, round = fund name e.g. 'Fund IV').\n"
+            "- For IPO filings from SEC EDGAR, set deal_type='IPO Filing'.\n\n"
             "Return ONLY valid JSON — a top-level array (no markdown fences):\n"
             "[\n"
             "  {{\n"
-            f'    "company": "Company name",\n'
+            f'    "company": "Company or GP firm name",\n'
             f'    "deal_type": one of [{deal_types_str}],\n'
             f'    "sector": one of [{sectors_str}],\n'
-            '    "round": "Round label e.g. Series C, Pre-IPO, Growth Round, or empty string",\n'
-            '    "amount": "Amount raised e.g. $500M, or \\"Not disclosed\\"",\n'
-            '    "valuation": "Post-money valuation if stated e.g. $4.5B, or \\"Not disclosed\\"",\n'
-            '    "lead_investors": ["Investor 1", "Investor 2"],\n'
-            '    "pricing_notes": "IPO price range or other pricing detail, or empty string",\n'
+            '    "round": "Round label e.g. Series C, Fund IV, Pre-IPO — or empty string",\n'
+            '    "amount": "Amount raised or fund size e.g. $500M — or \\"Not disclosed\\"",\n'
+            '    "valuation": "Post-money valuation if stated e.g. $4.5B — or \\"Not disclosed\\"",\n'
+            '    "prior_valuation": "Prior-round valuation if stated (critical for down rounds) — or \\"Not disclosed\\"",\n'
+            '    "lead_investors": ["Lead investor 1", "Lead investor 2"],\n'
+            '    "pricing_notes": "IPO price range, share price, or other pricing details — or empty string",\n'
+            '    "is_down_round": true or false,\n'
             '    "summary": "2-3 sentences: what happened, why it matters, key numbers. '
-            'Bold figures with <strong> tags.",\n'
+            'Bold figures and company names with <strong> tags. For down rounds, note the valuation cut explicitly.",\n'
             '    "article_date": "e.g. Mar 10, 2026",\n'
             '    "url": "article URL",\n'
             '    "source": "publication name"\n'
             "  }}\n"
             "]\n\n"
-            "Return an empty array [] if no genuine deal articles are found."
+            "Return an empty array [] if no genuine deal articles are found. "
+            "Cap output at 10 deals maximum."
         )
 
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=2000,
+            max_tokens=2800,
             system=_DEALS_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -697,9 +715,9 @@ def research_deals(
         if not isinstance(deals, list):
             return []
 
-        # Normalise fields and cap at 8 deals
+        # Normalise fields and cap at 10 deals
         cleaned = []
-        for d in deals[:8]:
+        for d in deals[:10]:
             if not isinstance(d, dict) or not d.get("company"):
                 continue
             if d.get("deal_type") not in DEAL_TYPES:
@@ -708,6 +726,12 @@ def research_deals(
                 d["sector"] = "Other"
             if not isinstance(d.get("lead_investors"), list):
                 d["lead_investors"] = []
+            # Ensure boolean
+            d["is_down_round"] = bool(d.get("is_down_round", False))
+            # Force deal_type consistency with flag
+            if d["is_down_round"] and d["deal_type"] == "Fundraise":
+                d["deal_type"] = "Down Round"
+            d.setdefault("prior_valuation", "Not disclosed")
             cleaned.append(d)
 
         return cleaned
