@@ -7,6 +7,8 @@ dependencies for feed parsing.
 Inspired by newsletters like TLDR, Morning Brew, and 1440 Daily Digest — which pull
 from authoritative, varied sources and surface the most-shared/engaged stories.
 """
+import html as _html_module
+import html.parser
 import logging
 import re
 import urllib.parse
@@ -15,10 +17,154 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Source tier classification
+#
+# Tier 1 — Primary sources: company press releases, SEC filings, and
+#           outlets whose editorial standards require primary sourcing
+#           before publication.  Numbers from these sources are treated
+#           as authoritative.
+#
+# Tier 2 — Quality secondary: reputable outlets that may cite unnamed
+#           sources or aggregate primary data.  Numbers should be treated
+#           as "reported" rather than confirmed.
+#
+# Tier 3 — Aggregators / secondary: sites that typically summarise other
+#           coverage.  Used for discovery only; numbers must be traced back
+#           to a Tier 1/2 source before being reported.
+# ---------------------------------------------------------------------------
+_TIER1_DOMAINS: frozenset[str] = frozenset({
+    # Regulatory / official filings
+    "sec.gov", "sec.report", "edgar.sec.gov",
+    # Wire services and breaking news — primary sourcing required
+    "reuters.com", "bloomberg.com", "apnews.com",
+    # Tier-1 financial press
+    "wsj.com", "ft.com", "theinformation.com",
+    # Press release distribution (i.e. company-authored primary source)
+    "businesswire.com", "prnewswire.com", "globenewswire.com", "accesswire.com",
+    # Authoritative tech journalism with editorial standards
+    "techcrunch.com",
+})
+
+_TIER2_DOMAINS: frozenset[str] = frozenset({
+    "fortune.com", "cnbc.com", "nytimes.com", "washingtonpost.com",
+    "axios.com", "theverge.com", "wired.com", "venturebeat.com",
+    "arstechnica.com", "forbes.com", "inc.com", "economist.com",
+    "barrons.com", "marketwatch.com", "thestreet.com", "bizjournals.com",
+    "protocol.com", "semafor.com",
+})
+
+# Everything else defaults to Tier 3
+
+
+def classify_source_tier(url: str) -> int:
+    """Return 1, 2, or 3 based on the domain of the given URL."""
+    try:
+        domain = urlparse(url).netloc.lower().lstrip("www.")
+        if domain in _TIER1_DOMAINS:
+            return 1
+        # Check subdomain match (e.g. "news.bloomberg.com")
+        for t1 in _TIER1_DOMAINS:
+            if domain.endswith("." + t1) or domain == t1:
+                return 1
+        if domain in _TIER2_DOMAINS:
+            return 2
+        for t2 in _TIER2_DOMAINS:
+            if domain.endswith("." + t2) or domain == t2:
+                return 2
+    except Exception:
+        pass
+    return 3
+
+
+# ---------------------------------------------------------------------------
+# Full-text article fetching
+#
+# RSS feeds only provide 200–500 char summaries — too thin for fact-checking.
+# We attempt to fetch the full article body for Tier 1/2 articles so Claude
+# has real text to extract verified numbers from.
+# ---------------------------------------------------------------------------
+
+class _BodyExtractor(html.parser.HTMLParser):
+    """Minimal HTML-to-text extractor that targets article body content."""
+    _SKIP_TAGS = frozenset({"script", "style", "nav", "header", "footer",
+                             "aside", "noscript", "figure", "figcaption"})
+    _BLOCK_TAGS = frozenset({"p", "h1", "h2", "h3", "h4", "li", "blockquote", "td"})
+
+    def __init__(self):
+        super().__init__()
+        self.chunks: list[str] = []
+        self._skip_depth = 0
+        self._current_tag = ""
+
+    def handle_starttag(self, tag, attrs):
+        self._current_tag = tag
+        if tag in self._SKIP_TAGS:
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+        if tag in self._BLOCK_TAGS:
+            self.chunks.append("\n")
+
+    def handle_data(self, data):
+        if self._skip_depth:
+            return
+        text = data.strip()
+        if text:
+            self.chunks.append(text + " ")
+
+    def get_text(self) -> str:
+        raw = "".join(self.chunks)
+        raw = _html_module.unescape(raw)
+        return re.sub(r"\n{3,}", "\n\n", re.sub(r" {2,}", " ", raw)).strip()
+
+
+def fetch_article_fulltext(url: str, max_chars: int = 4000) -> str:
+    """
+    Fetch the full article text from a URL.  Returns an empty string on
+    any failure (paywall, timeout, bot block, etc.) — callers should
+    fall back to the RSS snippet in that case.
+
+    Tier 1 sources are attempted even behind soft paywalls; we get
+    whatever text the server returns without JavaScript rendering.
+    """
+    try:
+        req = requests.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; MyDailyBrief/1.0; "
+                    "+https://github.com/example/mydailybrief)"
+                ),
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=8,
+            allow_redirects=True,
+        )
+        if req.status_code != 200:
+            return ""
+        content_type = req.headers.get("Content-Type", "")
+        if "html" not in content_type:
+            return ""
+
+        extractor = _BodyExtractor()
+        extractor.feed(req.text[:120_000])   # don't parse multi-MB pages
+        text = extractor.get_text()
+        return text[:max_chars]
+    except Exception as exc:
+        logger.debug("Full-text fetch failed for %s: %s", url, exc)
+        return ""
+
+
 
 # ---------------------------------------------------------------------------
 # RSS feed registry  –  category slug → list of feed URLs
@@ -160,12 +306,14 @@ def _parse_rss_channel(root: ET.Element, feed_url: str) -> tuple[str, list[dict]
         published = _parse_date(date_str)
 
         articles.append({
-            "title": title,
-            "url": link,
-            "summary": _strip_html(summary)[:500],
-            "source": source,
-            "published": published.isoformat() if published else None,
+            "title":        title,
+            "url":          link,
+            "summary":      _strip_html(summary)[:500],
+            "source":       source,
+            "published":    published.isoformat() if published else None,
             "published_dt": published,
+            "source_tier":  classify_source_tier(link),
+            "full_text":    "",   # populated later by _enrich_with_fulltext()
         })
 
     return source, articles
@@ -194,12 +342,14 @@ def _parse_atom_feed(root: ET.Element, feed_url: str) -> tuple[str, list[dict]]:
         published = _parse_date(date_str)
 
         articles.append({
-            "title": title,
-            "url": link,
-            "summary": _strip_html(summary)[:500],
-            "source": source,
-            "published": published.isoformat() if published else None,
+            "title":        title,
+            "url":          link,
+            "summary":      _strip_html(summary)[:500],
+            "source":       source,
+            "published":    published.isoformat() if published else None,
             "published_dt": published,
+            "source_tier":  classify_source_tier(link),
+            "full_text":    "",
         })
 
     return source, articles
@@ -223,6 +373,31 @@ def _parse_feed(url: str, max_articles: int = 10) -> list[dict[str, Any]]:
         if not a["published_dt"] or a["published_dt"] >= cutoff
     ]
     return fresh[:max_articles]
+
+
+def _enrich_with_fulltext(
+    articles: list[dict[str, Any]],
+    max_to_fetch: int = 4,
+) -> list[dict[str, Any]]:
+    """
+    Attempt to fetch full article text for the top `max_to_fetch` articles,
+    prioritising Tier 1 and Tier 2 sources.  Mutates in-place and returns
+    the list.  Articles whose full-text fetch fails keep their RSS summary.
+    """
+    # Sort by tier (best first) to use our fetch budget on the most trustworthy articles
+    ranked = sorted(articles, key=lambda a: a.get("source_tier", 3))
+    fetched = 0
+    for art in ranked:
+        if fetched >= max_to_fetch:
+            break
+        url = art.get("url", "")
+        if not url:
+            continue
+        text = fetch_article_fulltext(url)
+        if text:
+            art["full_text"] = text
+            fetched += 1
+    return articles
 
 
 def fetch_articles_for_categories(
@@ -442,10 +617,12 @@ def fetch_deals_news(max_articles: int = 20) -> list[dict[str, Any]]:
         key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )
-    for art in all_articles:
+    top = all_articles[:max_articles]
+    _enrich_with_fulltext(top, max_to_fetch=6)
+    for art in top:
         art.pop("published_dt", None)
 
-    return all_articles[:max_articles]
+    return top
 
 
 # ---------------------------------------------------------------------------
@@ -525,14 +702,16 @@ def fetch_articles_for_companies(
             except Exception as exc:
                 logger.warning("NewsAPI company search failed for %s: %s", company, exc)
 
-        # Sort by recency, clean up internal datetime field
+        # Sort by recency, then enrich top articles with full text
         articles.sort(
             key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
-        for art in articles:
+        top = articles[:max_per_company]
+        _enrich_with_fulltext(top, max_to_fetch=4)
+        for art in top:
             art.pop("published_dt", None)
 
-        results[company] = articles[:max_per_company]
+        results[company] = top
 
     return results

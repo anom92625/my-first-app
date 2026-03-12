@@ -253,15 +253,15 @@ _KNOWN_VALUATIONS: dict[str, str] = {
 }
 
 
-_BASELINE_SYSTEM_PROMPT = """You are a private market intelligence analyst with encyclopedic \
-knowledge of private technology companies — their funding history, investors, valuations, and \
-business models. You always provide specific figures. \
+_BASELINE_SYSTEM_PROMPT = """You are a private market intelligence analyst. \
+Your job is to provide a structured, clearly-labelled company profile from your training knowledge. \
 \
-Rules: \
-- Never say "Not publicly disclosed" for well-known companies. \
-- If exact valuation is uncertain, give your best estimate with the source round and year. \
-- If the company is bootstrapped or pre-funding, say so explicitly with "Bootstrapped" or "Pre-seed". \
-- Write descriptions for a sophisticated investor who has never heard of the company."""
+Critical rules for financial figures: \
+- All valuations, round sizes, and revenue figures from training knowledge MUST be labelled \
+  "(training data — verify)" so the reader knows they require independent verification. \
+- Never present a training-knowledge figure as if it were a confirmed live fact. \
+- If the company is bootstrapped or pre-funding, say so explicitly. \
+- Descriptions should be factual and written for a sophisticated investor."""
 
 
 def _fetch_company_baseline(
@@ -284,32 +284,31 @@ def _fetch_company_baseline(
 
     if known_val:
         val_instruction = (
-            f"The company's last known valuation on record is approximately {known_val}. "
-            f"Use this as the baseline and only replace it if your training data contains "
-            f"a more recent reported figure."
+            f"Your records show approximately {known_val} for this company. "
+            f"Use it as a starting point and append '(training data — verify)' to the value."
         )
     else:
         val_instruction = (
-            "Provide the most recent post-money valuation from your training data. "
-            "Give a specific figure with context, e.g. '$4.5B (Series C, Jan 2024)'. "
-            "If the company had no external funding, write 'Bootstrapped' or 'Pre-seed'. "
-            "Do NOT write 'Not publicly disclosed' — give your best known estimate."
+            "Provide the most recent post-money valuation you know, with round and year, "
+            "e.g. '$4.5B post-money (Series C, Jan 2024) (training data — verify)'. "
+            "If bootstrapped or pre-funding, write 'Bootstrapped' or 'Pre-seed'. "
+            "Always append '(training data — verify)' to any dollar figure."
         )
 
     prompt = (
         f"Provide a baseline investor profile for the private company: {company}\n\n"
-        "Use ONLY your training knowledge — no articles or external sources are provided.\n\n"
+        "Use ONLY your training knowledge. All financial figures must be labelled "
+        "'(training data — verify)' so the reader knows they need independent verification.\n\n"
         f"Valuation instruction: {val_instruction}\n\n"
         "Return ONLY valid JSON (no markdown fences):\n"
         "{{\n"
         f'  "company": "{company}",\n'
         f'  "sector": one of [{sectors}],\n'
         '  "description": "One sentence: what does the company do and for whom.",\n'
-        '  "valuation": "Most recent valuation with context e.g. \'$4.5B (Series C, Jan 2024)\' '
-        'or \'Bootstrapped\' or \'Pre-seed\'",\n'
+        '  "valuation": "e.g. \'$4.5B post-money (Series C, Jan 2024) (training data — verify)\'",\n'
         '  "last_round": "Most recent funding round label e.g. \'Series D\', \'Pre-IPO\', '
         '\'Bootstrapped\', or \'Unknown\'",\n'
-        '  "last_round_amount": "Amount raised in last round e.g. \'$150M\', or \'Not disclosed\'",\n'
+        '  "last_round_amount": "e.g. \'$150M (training data — verify)\', or \'Not disclosed\'",\n'
         '  "key_investors": ["Lead investor", "Investor 2", "Investor 3"],\n'
         '  "founded_year": "e.g. 2016 — or \'unknown\'"\n'
         "}}\n"
@@ -324,16 +323,23 @@ def _fetch_company_baseline(
     return _parse_json_response(msg.content[0].text)
 
 
-_INVESTOR_SYSTEM_PROMPT = """You are a professional investor and expert investor relations professional \
-helping private market investors stay on top of fast-moving private companies.
+_INVESTOR_SYSTEM_PROMPT = """You are a fact-checking financial journalist writing for a professional \
+private-market investor audience.
 
-Core rules:
-- The company baseline (description, sector, valuation) is provided to you — do not re-derive it.
-- For the NEWS UPDATE: use only the provided articles — never invent facts.
-- If the articles contain a valuation figure more recent than the baseline, update it.
-- Write 'skip: true' only if the articles contain zero investor-relevant information.
-- Never use jargon — write in plain English.
-- Be concise and direct. Write for a sophisticated investor who reads quickly."""
+Sourcing rules (non-negotiable):
+1. Use ONLY facts explicitly stated in the provided article text — never supplement with training knowledge.
+2. Use only Tier 1 primary sources: company press releases, SEC filings, Bloomberg, WSJ, FT, Reuters, \
+   TechCrunch, The Information.  If the article source is an aggregator, state which primary source it cites.
+3. Label every financial figure:
+   - "confirmed-closed" if the round/acquisition has definitively closed (money transferred, filing made)
+   - "announced" if reported/announced but not yet confirmed closed
+   - "projected" if the figure comes from an analyst, model, or unnamed source
+4. For valuations: always specify pre-money or post-money.  If the article does not specify, write \
+   "valuation type not specified".
+5. If two sources in the provided text cite different figures, report the range and name both sources.
+6. Never aggregate or paraphrase financial figures — quote the specific sentence from the source.
+7. If a fact cannot be verified from the provided article text, omit it entirely.
+8. The company baseline (sector, description) is pre-filled — do not re-derive it from articles."""
 
 # Maps update_type → CSS pill class (used in generator)
 UPDATE_TYPE_PILL = {
@@ -415,18 +421,21 @@ def research_company_update(
         art = new_articles[0]
         known_val = _KNOWN_VALUATIONS.get(company, "Not disclosed")
         return {
-            "company":      company,
-            "sector":       "Other",
-            "description":  "",
-            "valuation":    known_val,
-            "last_round":   "",
+            "company":       company,
+            "sector":        "Other",
+            "description":   "",
+            "valuation":     f"{known_val} (training data — verify)" if known_val != "Not disclosed" else known_val,
+            "last_round":    "",
             "key_investors": [],
-            "update_type":  "Other",
-            "update":       art.get("title", ""),
-            "article_date": (art.get("published") or "")[:10],
-            "summary":      art.get("summary", ""),
-            "url":          art.get("url", "#"),
-            "source":       art.get("source", ""),
+            "update_type":   "Other",
+            "deal_status":   "announced",
+            "update":        art.get("title", ""),
+            "article_date":  (art.get("published") or "")[:10],
+            "summary":       art.get("summary", ""),
+            "citation":      "",
+            "source_tier":   art.get("source_tier", 3),
+            "url":           art.get("url", "#"),
+            "source":        art.get("source", ""),
         }
 
     try:
@@ -461,13 +470,17 @@ def research_company_update(
         # ------------------------------------------------------------------ #
         articles_text = ""
         for i, art in enumerate(new_articles[:5], 1):
+            # Use full article text when available, fall back to RSS snippet
+            body = art.get("full_text") or art.get("summary", "")
+            tier = art.get("source_tier", 3)
+            tier_label = {1: "Tier 1 (Primary)", 2: "Tier 2 (Quality secondary)", 3: "Tier 3 (Aggregator)"}.get(tier, "Tier 3")
             articles_text += (
-                f"\nArticle {i}:\n"
-                f"  Title:   {art.get('title', '')}\n"
-                f"  Date:    {art.get('published', 'unknown')}\n"
-                f"  Source:  {art.get('source', '')}\n"
-                f"  URL:     {art.get('url', '')}\n"
-                f"  Snippet: {art.get('summary', '')[:500]}\n"
+                f"\n--- Article {i} ---\n"
+                f"Title:       {art.get('title', '')}\n"
+                f"Date:        {art.get('published', 'unknown')}\n"
+                f"Source:      {art.get('source', '')}  [{tier_label}]\n"
+                f"URL:         {art.get('url', '')}\n"
+                f"Body text:\n{body[:3000]}\n"
             )
 
         upd_types = ", ".join(f'"{t}"' for t in _VALID_UPD_TYPES)
@@ -475,33 +488,42 @@ def research_company_update(
             f"Company: {baseline.get('company', company)}\n"
             f"Sector: {baseline.get('sector', 'Other')}\n"
             f"Description: {baseline.get('description', '')}\n"
-            f"Last known valuation: {baseline.get('valuation', 'Unknown')}\n"
+            f"Baseline valuation (training data, needs verification): {baseline.get('valuation', 'Unknown')}\n"
             f"Last round: {baseline.get('last_round', 'Unknown')} "
             f"({baseline.get('last_round_amount', 'Not disclosed')})\n"
             f"Key investors: {', '.join(baseline.get('key_investors', []))}\n"
         )
 
         prompt = (
-            f"You have a pre-researched baseline for the private company {company}:\n\n"
+            f"Baseline for {company} (training data — for context only):\n"
             f"{baseline_summary}\n"
             "---\n"
-            "Now look at the articles below and identify the single most investor-relevant "
-            "update about this company. Do NOT re-derive the baseline fields — they are "
-            "already correct. ONLY add the update fields.\n\n"
-            "If an article reports a valuation more recent than the baseline, include it "
-            "in a 'valuation_override' field; otherwise omit it.\n\n"
+            "FACT-CHECKING RULES:\n"
+            "1. Only report financial figures explicitly stated in the article body text below.\n"
+            "2. For each number, provide a citation: the exact sentence from the article.\n"
+            "3. Label every financial figure with its deal_status:\n"
+            "   - 'confirmed-closed': round definitively closed (press release, SEC filing, or company statement)\n"
+            "   - 'announced': reported/announced but not yet confirmed closed\n"
+            "   - 'projected': analyst estimate or unnamed source\n"
+            "4. For valuations: specify pre-money or post-money. If not stated, write 'type not specified'.\n"
+            "5. If two articles give different figures, report the range: e.g. '$4B–$4.5B (Source A vs Source B)'.\n"
+            "6. If source is Tier 3 (aggregator), name the primary source the aggregator cites.\n"
+            "7. If no verifiable investor-relevant news exists in the articles, return {\"skip\": true}.\n\n"
             f"{articles_text}\n"
             "Return ONLY valid JSON (no markdown fences):\n"
             "{{\n"
             f'  "update_type": one of [{upd_types}],\n'
+            '  "deal_status": "confirmed-closed" | "announced" | "projected" | "not-applicable",\n'
             '  "update": "One sentence — the key investor-relevant news headline.",\n'
             '  "article_date": "Date of the article e.g. Mar 10, 2026",\n'
-            '  "summary": "3-4 sentences with <strong> around key figures. '
-            'What happened and why it matters to investors.",\n'
+            '  "summary": "3-4 sentences. Only facts from the article text. '
+            'Bold key figures with <strong>. State the source tier.",\n'
+            '  "citation": "The exact sentence(s) from the article that support the key figure(s).",\n'
+            '  "source_tier": 1 | 2 | 3,\n'
             '  "url": "URL of the primary article",\n'
             '  "source": "Publication name",\n'
-            '  "valuation_override": "Only if articles contain a newer valuation figure '
-            'e.g. \'$5.2B (Series D, Mar 2026)\' — otherwise omit this field"\n'
+            '  "valuation_override": '
+            '"If articles state a NEW valuation: \'$5.2B post-money (Series D, Mar 2026) [announced]\' — else omit"\n'
             "}}\n\n"
             f"If none of the articles contain useful investor news about {company}, "
             'return exactly: {{"skip": true}}'
@@ -529,18 +551,21 @@ def research_company_update(
         final_valuation = update.pop("valuation_override", None) or baseline.get("valuation", "Not disclosed")
 
         return {
-            # From baseline (always populated)
+            # From baseline (training knowledge, labelled as such)
             "company":       baseline.get("company", company),
             "sector":        baseline.get("sector", "Other"),
             "description":   baseline.get("description", ""),
             "valuation":     final_valuation,
             "last_round":    baseline.get("last_round", ""),
             "key_investors": baseline.get("key_investors", []),
-            # From update (article-derived)
+            # From update (article-derived, fact-checked)
             "update_type":   update.get("update_type", "Other"),
+            "deal_status":   update.get("deal_status", "announced"),
             "update":        update.get("update", ""),
             "article_date":  update.get("article_date", ""),
             "summary":       update.get("summary", ""),
+            "citation":      update.get("citation", ""),
+            "source_tier":   update.get("source_tier", 3),
             "url":           update.get("url", "#"),
             "source":        update.get("source", ""),
         }
@@ -722,13 +747,22 @@ DEAL_TYPES = [
     "Debt Financing",  # Venture debt, credit facility, or convertible note
 ]
 
-_DEALS_SYSTEM_PROMPT = """You are a senior analyst at a top-tier private equity firm. \
-Your job is to extract clean, structured data from raw article titles and snippets about \
-IPOs, fundraising rounds, acquisitions, fund closes, down rounds, and other capital-markets events. \
-Be precise with numbers. Never invent investors, amounts, or valuations not stated in the source text. \
-Write 'Not disclosed' for any field not mentioned. \
-Flag down rounds and bridge rounds explicitly — they are the most important distress signals \
-professional investors track. A down round is any raise at a valuation below the prior round."""
+_DEALS_SYSTEM_PROMPT = """You are a fact-checking financial journalist covering private markets for \
+a professional investor audience.
+
+Non-negotiable sourcing rules:
+1. Extract ONLY facts explicitly stated in the provided article text. Never invent figures.
+2. Accept only Tier 1 primary sources: company press releases, SEC filings, Bloomberg, WSJ, FT, \
+   Reuters, TechCrunch, The Information. If the article is from a secondary source, identify what \
+   primary source it cites.
+3. Label every financial figure:
+   - "confirmed-closed": round/deal definitively closed (confirmed by press release, SEC, company)
+   - "announced": reported/announced but closure not yet confirmed
+   - "projected": analyst estimate, valuation model, or unnamed source
+4. Always specify pre-money vs post-money for valuations. Write "type not specified" if absent.
+5. If two sources in the text give different figures, report both: "$4B–$4.5B (Source A vs Source B)".
+6. For each key figure, provide a citation — the exact quote from the article.
+7. Omit any fact that cannot be traced to a specific sentence in the provided text."""
 
 
 def research_deals(
@@ -779,53 +813,59 @@ def research_deals(
 
         articles_text = ""
         for i, art in enumerate(new_articles[:15], 1):
+            body = art.get("full_text") or art.get("summary", "")
+            tier = art.get("source_tier", 3)
+            tier_label = {1: "Tier 1 (Primary)", 2: "Tier 2", 3: "Tier 3 (Aggregator)"}.get(tier, "Tier 3")
             articles_text += (
-                f"\nArticle {i}:\n"
-                f"  Title:   {art.get('title', '')}\n"
-                f"  Date:    {art.get('published', 'unknown')}\n"
-                f"  Source:  {art.get('source', '')}\n"
-                f"  URL:     {art.get('url', '')}\n"
-                f"  Snippet: {art.get('summary', '')[:400]}\n"
+                f"\n--- Article {i} ---\n"
+                f"Title:   {art.get('title', '')}\n"
+                f"Date:    {art.get('published', 'unknown')}\n"
+                f"Source:  {art.get('source', '')}  [{tier_label}]\n"
+                f"URL:     {art.get('url', '')}\n"
+                f"Body:\n{body[:2500]}\n"
             )
 
         prompt = (
-            f"Below are {len(new_articles[:15])} news articles. "
-            "Identify every genuine capital-markets event described: fundraising rounds, "
-            "IPO filings/pricings, acquisitions, exits, fund closes, down rounds, "
-            "bridge rounds, secondary sales, debt financings, and SPACs.\n\n"
+            f"Below are {len(new_articles[:15])} articles. "
+            "Identify every genuine capital-markets event: fundraising rounds, IPO filings/pricings, "
+            "acquisitions, exits, fund closes, down rounds, bridge rounds, secondary sales, "
+            "debt financings, and SPACs.\n\n"
+            "FACT-CHECKING RULES:\n"
+            "- Extract ONLY figures explicitly stated in the article body text.\n"
+            "- Label deal_status: 'confirmed-closed' / 'announced' / 'projected'.\n"
+            "- Specify pre-money or post-money for each valuation. Write 'type not specified' if absent.\n"
+            "- Provide a citation: the exact sentence from the article supporting each key figure.\n"
+            "- If Tier 3 source: name the primary source it cites in primary_source_cited.\n"
+            "- Set deal_type='Down Round' only if the article explicitly states valuation is below the "
+            "prior round or uses 'down round'/'flat round'.\n"
+            "- Set deal_type='Fund Close' for GP fund announcements (company = GP name).\n"
+            "- SKIP any article where no specific named company or verifiable dollar figure exists.\n\n"
             f"{articles_text}\n"
-            "RULES:\n"
-            "- ONLY include articles that describe a specific, named deal or event.\n"
-            "- Skip general opinion, market commentary, and listicles.\n"
-            "- Set deal_type='Down Round' if the new valuation is below the prior round, "
-            "OR if the article explicitly calls it a down round or flat round.\n"
-            "- Set deal_type='Bridge Round' if the article mentions bridge financing, "
-            "extended runway, or convertible note to next round.\n"
-            "- Set deal_type='Fund Close' for VC/PE fund close announcements "
-            "(company = GP firm name, round = fund name e.g. 'Fund IV').\n"
-            "- For IPO filings from SEC EDGAR, set deal_type='IPO Filing'.\n\n"
             "Return ONLY valid JSON — a top-level array (no markdown fences):\n"
             "[\n"
             "  {{\n"
             f'    "company": "Company or GP firm name",\n'
             f'    "deal_type": one of [{deal_types_str}],\n'
             f'    "sector": one of [{sectors_str}],\n'
-            '    "round": "Round label e.g. Series C, Fund IV, Pre-IPO — or empty string",\n'
-            '    "amount": "Amount raised or fund size e.g. $500M — or \\"Not disclosed\\"",\n'
-            '    "valuation": "Post-money valuation if stated e.g. $4.5B — or \\"Not disclosed\\"",\n'
-            '    "prior_valuation": "Prior-round valuation if stated (critical for down rounds) — or \\"Not disclosed\\"",\n'
+            '    "round": "Round label e.g. Series C, Fund IV — or empty string",\n'
+            '    "amount": "e.g. \'$500M (announced)\' — or \\"Not disclosed\\"",\n'
+            '    "valuation": "e.g. \'$4.5B post-money (announced)\' — or \\"Not disclosed\\"",\n'
+            '    "prior_valuation": "Prior-round valuation if stated — or \\"Not disclosed\\"",\n'
             '    "lead_investors": ["Lead investor 1", "Lead investor 2"],\n'
-            '    "pricing_notes": "IPO price range, share price, or other pricing details — or empty string",\n'
+            '    "pricing_notes": "IPO price range or pricing details — or empty string",\n'
             '    "is_down_round": true or false,\n'
-            '    "summary": "2-3 sentences: what happened, why it matters, key numbers. '
-            'Bold figures and company names with <strong> tags. For down rounds, note the valuation cut explicitly.",\n'
+            '    "deal_status": "confirmed-closed" | "announced" | "projected",\n'
+            '    "citation": "Exact sentence from the article supporting the key figure.",\n'
+            '    "source_tier": 1 | 2 | 3,\n'
+            '    "primary_source_cited": "Primary source named by aggregator — or empty string",\n'
+            '    "summary": "2-3 sentences: what happened, why it matters. Bold figures with <strong>. '
+            'State deal_status and valuation type explicitly.",\n'
             '    "article_date": "e.g. Mar 10, 2026",\n'
             '    "url": "article URL",\n'
             '    "source": "publication name"\n'
             "  }}\n"
             "]\n\n"
-            "Return an empty array [] if no genuine deal articles are found. "
-            "Cap output at 10 deals maximum."
+            "Return [] if no verifiable deal articles found. Max 10 deals."
         )
 
         msg = client.messages.create(
@@ -849,6 +889,7 @@ def research_deals(
 
         # Normalise fields and cap at 10 deals
         cleaned = []
+        _valid_statuses = {"confirmed-closed", "announced", "projected"}
         for d in deals[:10]:
             if not isinstance(d, dict) or not d.get("company"):
                 continue
@@ -858,12 +899,16 @@ def research_deals(
                 d["sector"] = "Other"
             if not isinstance(d.get("lead_investors"), list):
                 d["lead_investors"] = []
-            # Ensure boolean
             d["is_down_round"] = bool(d.get("is_down_round", False))
-            # Force deal_type consistency with flag
             if d["is_down_round"] and d["deal_type"] == "Fundraise":
                 d["deal_type"] = "Down Round"
             d.setdefault("prior_valuation", "Not disclosed")
+            # Ensure new fact-checking fields exist with safe defaults
+            if d.get("deal_status") not in _valid_statuses:
+                d["deal_status"] = "announced"
+            d.setdefault("citation", "")
+            d.setdefault("source_tier", 3)
+            d.setdefault("primary_source_cited", "")
             cleaned.append(d)
 
         return cleaned

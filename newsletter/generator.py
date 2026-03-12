@@ -197,8 +197,39 @@ def build_html_newsletter(
 </html>"""
 
 
+_DEAL_STATUS_STYLES: dict[str, tuple[str, str, str]] = {
+    "confirmed-closed": ("✓ CLOSED",    "#0a3020", "#c8f0dc"),
+    "announced":        ("ANNOUNCED",   "#5a3d00", "#fef5e5"),
+    "projected":        ("PROJECTED",   "#3a3a3a", "#ebebeb"),
+    "not-applicable":   ("N/A",         "#4a4e5a", "#f0ece3"),
+}
+
+_SOURCE_TIER_STYLES: dict[int, tuple[str, str, str]] = {
+    1: ("T1 · PRIMARY",    "#0f2545", "#dce6f5"),
+    2: ("T2 · SECONDARY",  "#3a2000", "#fef3d8"),
+    3: ("T3 · AGGREGATOR", "#5a0a0a", "#fce8e8"),
+}
+
+
+def _deal_status_badge(status: str) -> str:
+    label, color, bg = _DEAL_STATUS_STYLES.get(status, ("ANNOUNCED", "#5a3d00", "#fef5e5"))
+    return (
+        f'<span style="font-family:monospace;font-size:8px;letter-spacing:.12em;'
+        f'font-weight:700;padding:2px 7px;background:{bg};color:{color};'
+        f'border-radius:1px;white-space:nowrap;">{label}</span>'
+    )
+
+
+def _source_tier_badge(tier: int) -> str:
+    label, color, bg = _SOURCE_TIER_STYLES.get(tier, ("T3 · AGGREGATOR", "#5a0a0a", "#fce8e8"))
+    return (
+        f'<span style="font-family:monospace;font-size:8px;letter-spacing:.1em;'
+        f'padding:1px 6px;background:{bg};color:{color};border-radius:1px;">{label}</span>'
+    )
+
+
 def _table_row_html(row: dict, index: int) -> str:
-    """Render one <tr> for the deal tracker table."""
+    """Render one <tr> for the watchlist company table."""
     from newsletter.summarizer import UPDATE_TYPE_PILL, SECTOR_BADGE
 
     company       = row.get("company", "")
@@ -210,14 +241,16 @@ def _table_row_html(row: dict, index: int) -> str:
     key_investors = row.get("key_investors", [])
     update        = row.get("update", "")
     summary       = row.get("summary", "")
+    citation      = row.get("citation", "")
+    deal_status   = row.get("deal_status", "announced")
+    source_tier   = int(row.get("source_tier", 3))
     url           = row.get("url", "#")
     source        = row.get("source", "")
 
     badge_label, badge_cls = SECTOR_BADGE.get(sector, ("Tech", "b-macro"))
     pill_label,  pill_cls  = UPDATE_TYPE_PILL.get(update_type, ("Update", "p-analysis"))
 
-    # Valuation: separate the main figure from the parenthetical context
-    # e.g. "$4.5B (Series C, Jan 2024)" → figure="$4.5B"  ctx="(Series C, Jan 2024)"
+    # Split valuation figure from its parenthetical label
     val_figure = valuation
     val_ctx    = ""
     if "(" in valuation:
@@ -237,7 +270,7 @@ def _table_row_html(row: dict, index: int) -> str:
             f"color:#4a4e5a;text-transform:uppercase;'>{last_round}</span>"
         )
 
-    # Show top investor(s) from baseline as small badges under the company name
+    # Key investors from baseline
     investor_badges = ""
     if key_investors:
         investor_badges = "".join(
@@ -248,12 +281,18 @@ def _table_row_html(row: dict, index: int) -> str:
         )
         investor_badges = f"<div style='margin-top:3px;'>{investor_badges}</div>"
 
-    # Combine update headline + summary into one readable cell
+    # Summary + citation
     summary_html = ""
     if update:
         summary_html += f"<strong>{update}</strong>"
     if summary:
         summary_html += f"<br><span style='font-weight:300;color:#4a4e5a;'>{summary}</span>"
+    if citation:
+        summary_html += (
+            f"<br><span style='font-family:monospace;font-size:9px;color:#4a4e5a;"
+            f"font-style:italic;border-left:2px solid #d8d3c8;padding-left:6px;"
+            f"margin-top:4px;display:block;'>\"{citation[:200]}\"</span>"
+        )
 
     row_num = str(index + 1).zfill(2)
 
@@ -265,8 +304,14 @@ def _table_row_html(row: dict, index: int) -> str:
         f"  <span class='badge {badge_cls}'>{badge_label}</span>"
         f"  {investor_badges}"
         f"</td>"
-        f"<td><span class='pill {pill_cls}'>{pill_label}</span></td>"
-        f"<td class='date-cell'>{article_date}</td>"
+        f"<td>"
+        f"  <span class='pill {pill_cls}'>{pill_label}</span><br>"
+        f"  {_deal_status_badge(deal_status)}"
+        f"</td>"
+        f"<td class='date-cell'>"
+        f"  {article_date}<br>"
+        f"  {_source_tier_badge(source_tier)}"
+        f"</td>"
         f"<td>{val_html}</td>"
         f"<td class='sum'>{summary_html}</td>"
         f"<td>"
@@ -304,20 +349,24 @@ def _ipo_grid_html(ipo_rows: list[dict]) -> str:
 
 def _deal_card_html(deal: dict[str, Any], index: int) -> str:
     """Render one deal card for the Deals & Fundraising section."""
-    company        = deal.get("company", "Unknown")
-    deal_type      = deal.get("deal_type", "Fundraise")
-    sector         = deal.get("sector", "Other")
-    round_label    = deal.get("round", "")
-    amount         = deal.get("amount", "Not disclosed")
-    valuation      = deal.get("valuation", "Not disclosed")
-    prior_val      = deal.get("prior_valuation", "Not disclosed")
-    lead_investors = deal.get("lead_investors", [])
-    pricing_notes  = deal.get("pricing_notes", "")
-    summary        = deal.get("summary", "")
-    article_date   = deal.get("article_date", "")
-    url            = deal.get("url", "#")
-    source         = deal.get("source", "")
-    is_down_round  = bool(deal.get("is_down_round", False))
+    company              = deal.get("company", "Unknown")
+    deal_type            = deal.get("deal_type", "Fundraise")
+    sector               = deal.get("sector", "Other")
+    round_label          = deal.get("round", "")
+    amount               = deal.get("amount", "Not disclosed")
+    valuation            = deal.get("valuation", "Not disclosed")
+    prior_val            = deal.get("prior_valuation", "Not disclosed")
+    lead_investors       = deal.get("lead_investors", [])
+    pricing_notes        = deal.get("pricing_notes", "")
+    summary              = deal.get("summary", "")
+    citation             = deal.get("citation", "")
+    article_date         = deal.get("article_date", "")
+    url                  = deal.get("url", "#")
+    source               = deal.get("source", "")
+    is_down_round        = bool(deal.get("is_down_round", False))
+    deal_status          = deal.get("deal_status", "announced")
+    source_tier          = int(deal.get("source_tier", 3))
+    primary_source_cited = deal.get("primary_source_cited", "")
 
     # Down rounds get a red top-border; fund closes get gold; everything else navy
     if is_down_round or deal_type == "Down Round":
@@ -428,15 +477,31 @@ def _deal_card_html(deal: dict[str, Any], index: int) -> str:
         f'{investors_html}'
         # Summary
         f'<p style="margin:10px 0 0;font-size:12.5px;color:#282830;line-height:1.65;">{summary}</p>'
+        # Citation excerpt
+        + (
+            f'<div style="margin-top:8px;padding:6px 10px;background:#f8f6f2;'
+            f'border-left:2px solid #d8d3c8;font-family:monospace;font-size:10px;'
+            f'color:#4a4e5a;font-style:italic;line-height:1.5;">"{citation[:250]}"</div>'
+            if citation else ""
+        )
         # Pricing notes
-        f'{pricing_html}'
-        # Source / date footer
-        f'<div style="margin-top:10px;font-family:monospace;font-size:10px;color:#4a4e5a;">'
-        f'  {article_date}&nbsp;&middot;&nbsp;'
-        f'  <a href="{url}" target="_blank" style="color:#0f2545;text-decoration:none;'
-        f'border-bottom:1px solid rgba(15,37,69,.25);">{source}&nbsp;&#x2197;</a>'
-        f'</div>'
-        f'</div>'
+        + f'{pricing_html}'
+        # Source / date footer with deal-status and source-tier badges
+        + f'<div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        + f'  {_deal_status_badge(deal_status)}'
+        + f'  {_source_tier_badge(source_tier)}'
+        + (
+            f'  <span style="font-family:monospace;font-size:9px;color:#4a4e5a;">'
+            f'via {primary_source_cited}</span>'
+            if primary_source_cited else ""
+        )
+        + f'  <span style="font-family:monospace;font-size:10px;color:#4a4e5a;margin-left:auto;">'
+        + f'    {article_date}&nbsp;&middot;&nbsp;'
+        + f'    <a href="{url}" target="_blank" style="color:#0f2545;text-decoration:none;'
+        + f'border-bottom:1px solid rgba(15,37,69,.25);">{source}&nbsp;&#x2197;</a>'
+        + f'  </span>'
+        + f'</div>'
+        + f'</div>'
     )
 
 
@@ -540,6 +605,19 @@ def _deals_section_html(
         '    IPOs, Exits &amp; Fundraising</span>'
         '  <span style="font-family:monospace;font-size:8.5px;color:#4a4e5a;'
         'letter-spacing:.1em;white-space:nowrap;">New deals today</span>'
+        '</div>'
+        # Fact-label legend
+        '<div style="margin-bottom:16px;padding:10px 14px;background:#f8f6f2;'
+        'border:1px solid #d8d3c8;font-family:monospace;font-size:9px;color:#4a4e5a;">'
+        '<span style="font-weight:700;letter-spacing:.1em;">FACT LABELS&nbsp;&nbsp;</span>'
+        '<span style="background:#c8f0dc;color:#0a3020;padding:1px 6px;border-radius:1px;margin-right:8px;">✓ CLOSED</span>'
+        'Round confirmed closed (press release / SEC filing / company statement)&nbsp;&nbsp;'
+        '<span style="background:#fef5e5;color:#5a3d00;padding:1px 6px;border-radius:1px;margin-right:8px;">ANNOUNCED</span>'
+        'Reported but closure not yet confirmed&nbsp;&nbsp;'
+        '<span style="background:#ebebeb;color:#3a3a3a;padding:1px 6px;border-radius:1px;margin-right:8px;">PROJECTED</span>'
+        'Analyst estimate or unnamed source&nbsp;&nbsp;'
+        '<span style="background:#dce6f5;color:#0f2545;padding:1px 6px;border-radius:1px;margin-right:8px;">T1 · PRIMARY</span>'
+        'Bloomberg / Reuters / WSJ / FT / SEC / press release'
         '</div>'
         # Type breakdown bar (with down-round alert if any)
         f'<div style="margin-bottom:20px;padding:10px 14px;background:#f0ece3;'
